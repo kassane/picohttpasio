@@ -9,8 +9,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const libasio = libasio_dep.artifact("asio");
+    const libpicohttpparser = picolib(b, .{ optimize, target });
+
     const exe = b.addExecutable(.{
-        .name = "picoAsio",
+        .name = "picohttp-asio",
         .target = target,
         .optimize = optimize,
     });
@@ -18,10 +20,12 @@ pub fn build(b: *std.Build) void {
     for (libasio.include_dirs.items) |include| {
         exe.include_dirs.append(include) catch {};
     }
-    exe.addCSourceFiles(&.{
-        "src/main.cpp",
-        "src/picohttpparser.c",
-    }, cflags);
+    exe.addCSourceFile(.{
+        .file = .{ .path = "src/main.cpp" },
+        .flags = cflags,
+    });
+    exe.disable_sanitize_c = true;
+    exe.linkLibrary(libpicohttpparser);
     exe.linkLibrary(libasio);
     exe.linkLibCpp();
 
@@ -37,8 +41,26 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 }
 
+fn picolib(b: *std.Build, property: struct { std.builtin.OptimizeMode, std.zig.CrossTarget }) *std.Build.Step.Compile {
+    const lib = b.addStaticLibrary(.{
+        .name = "picohttpparser",
+        .target = property[1],
+        .optimize = property[0],
+    });
+    lib.addIncludePath(.{ .path = "include" });
+    lib.addCSourceFile(.{
+        .file = .{ .path = "src/picohttpparser.c" },
+        .flags = cflags,
+    });
+    lib.disable_sanitize_c = true;
+    lib.linkLibC();
+
+    return lib;
+}
+
 const cflags = &.{
     "-Wall",
     "-Wextra",
     // "-Wshadow",
+    // "-Wpedantic",
 };

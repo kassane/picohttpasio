@@ -2,6 +2,10 @@ MIT License
 
 Copyright (c) 2023 Matheus C. França
 
+The picohttpparser library: Copyright (c) 2009-2014 Kazuho Oku, Tokuhiro Matsuno, Daisuke Murase, Shigeo Mitsunari (MIT)
+
+The Asio library: Copyright (c) 2003-2023 Christopher M. Kohlhoff (BSL-1.0)
+
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
