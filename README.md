@@ -1,4 +1,4 @@
-# HTTP Server with picohttpparser and Asio
+# HTTP Server & Client with picohttpparser and Asio
 
 This is a simple HTTP server implemented in C++ using the `picohttpparser` library for HTTP parsing and the Asio library for network communication. The server can serve static files and return a `Hello C++ Server!!` response for specific routes.
 
@@ -7,7 +7,7 @@ This is a simple HTTP server implemented in C++ using the `picohttpparser` libra
 Before running this HTTP server, make sure you have the following prerequisites installed:
 
 - C++ compiler
-- CMake (for building the project) - **TODO**
+- CMake (for building the project)
 - [Asio library](https://github.com/chriskohlhoff/asio)
 - [picohttpparser library](https://github.com/h2o/picohttpparser)
 
@@ -30,7 +30,7 @@ Usage Serving Static Files
 To serve static files, simply place your files in the `./www` directory. The server will serve `index.html` by default when accessing the root (`/`) URL.
 Custom Routes
 
-You can create custom routes by modifying the handleRequest method in the HTTPRequestHandler class. For example, to respond with a static `Hello World Server!!` response for the `/hello` route, you can add:
+You can create custom routes by modifying the handleRequest method in the HTTPRequestHandler class. For example, to respond with a static `Hello C++ Server!!` response for the `/hello` route, you can add:
 
 # License
 
