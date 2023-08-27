@@ -1,0 +1,10 @@
+.{
+    .name = "picoasio",
+    .version = "0.1.0",
+    .dependencies = .{
+        .asio = .{
+            .url = "https://github.com/kassane/asio/archive/2e97b6a4d37be85529d191380eeda67240fd61fe.tar.gz",
+            .hash = "1220c5045536c851f9a2ff4ea7ee929f334cfb7a8129da035f715f82a13c9f1b1e84",
+        },
+    },
+}
