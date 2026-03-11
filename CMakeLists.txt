@@ -1,9 +1,13 @@
 cmake_minimum_required(VERSION 3.14)
-project(picohttp-asio VERSION 0.2.0 LANGUAGES C CXX)
+project(picohttp-asio VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Options
+option(PICO_ENABLE_TLS    "Enable HTTPS/TLS via OpenSSL"    ON)
+option(PICO_ENABLE_CRYPTO "Enable crypto primitives via libsodium" ON)
 
 include(FetchContent)
 
@@ -37,6 +41,82 @@ FetchContent_Declare(Catch2
 FetchContent_MakeAvailable(Catch2)
 
 # ---------------------------------------------------------------------------
+# OpenSSL — TLS/HTTPS support
+# ---------------------------------------------------------------------------
+if (PICO_ENABLE_TLS)
+    find_package(OpenSSL QUIET)
+    if (NOT OpenSSL_FOUND)
+        message(STATUS "OpenSSL not found on system — trying FetchContent (janbar/openssl-cmake)...")
+        FetchContent_Declare(openssl_cmake
+            GIT_REPOSITORY https://github.com/janbar/openssl-cmake.git
+            GIT_TAG        master
+            GIT_SHALLOW    TRUE)
+        FetchContent_MakeAvailable(openssl_cmake)
+        if (TARGET ssl AND TARGET crypto)
+            set(OpenSSL_FOUND TRUE)
+            # Alias to standard targets if they don't exist yet
+            if (NOT TARGET OpenSSL::SSL)
+                add_library(OpenSSL::SSL    ALIAS ssl)
+                add_library(OpenSSL::Crypto ALIAS crypto)
+            endif()
+        else()
+            message(WARNING
+                "OpenSSL build failed — HTTPS/TLS disabled.\n"
+                "Install OpenSSL: apt-get install libssl-dev  (Debian/Ubuntu)\n"
+                "                 dnf install openssl-devel    (Fedora/RHEL)\n"
+                "                 brew install openssl         (macOS)")
+            set(PICO_ENABLE_TLS OFF)
+        endif()
+    endif()
+    if (PICO_ENABLE_TLS)
+        message(STATUS "TLS enabled (OpenSSL ${OPENSSL_VERSION})")
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# libsodium — cryptographic primitives
+# ---------------------------------------------------------------------------
+if (PICO_ENABLE_CRYPTO)
+    # Try pkg-config first (fastest on Linux)
+    find_package(PkgConfig QUIET)
+    if (PkgConfig_FOUND)
+        pkg_check_modules(sodium IMPORTED_TARGET libsodium QUIET)
+    endif()
+
+    if (sodium_FOUND)
+        message(STATUS "libsodium found via pkg-config (${sodium_VERSION})")
+        set(PICO_SODIUM_TARGET PkgConfig::sodium)
+    else()
+        # Fall back to find_package with our custom module
+        list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+        find_package(Sodium QUIET)
+        if (Sodium_FOUND)
+            message(STATUS "libsodium found via FindSodium (${Sodium_VERSION})")
+            set(PICO_SODIUM_TARGET Sodium::Sodium)
+        else()
+            # Last resort: FetchContent with a cmake wrapper
+            message(STATUS "libsodium not found on system — trying FetchContent (robinlinden/libsodium-cmake)...")
+            FetchContent_Declare(libsodium_cmake
+                GIT_REPOSITORY https://github.com/robinlinden/libsodium-cmake.git
+                GIT_TAG        main
+                GIT_SHALLOW    TRUE)
+            FetchContent_MakeAvailable(libsodium_cmake)
+            if (TARGET sodium)
+                message(STATUS "libsodium built via FetchContent")
+                set(PICO_SODIUM_TARGET sodium)
+                set(sodium_FOUND TRUE)
+            else()
+                message(WARNING
+                    "libsodium not available — crypto features disabled.\n"
+                    "Install: apt-get install libsodium-dev  (Debian/Ubuntu)\n"
+                    "         brew install libsodium         (macOS)")
+                set(PICO_ENABLE_CRYPTO OFF)
+            endif()
+        endif()
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
 # picohttpparser (C library, compiled once)
 # ---------------------------------------------------------------------------
 add_library(picohttpparser STATIC src/picohttpparser.c)
@@ -49,6 +129,16 @@ add_library(picohttpasio INTERFACE)
 target_include_directories(picohttpasio INTERFACE include)
 target_link_libraries(picohttpasio INTERFACE picohttpparser asio)
 
+if (PICO_ENABLE_TLS)
+    target_link_libraries(picohttpasio INTERFACE OpenSSL::SSL OpenSSL::Crypto)
+    target_compile_definitions(picohttpasio INTERFACE PICO_ENABLE_TLS)
+endif()
+
+if (PICO_ENABLE_CRYPTO)
+    target_link_libraries(picohttpasio INTERFACE ${PICO_SODIUM_TARGET})
+    target_compile_definitions(picohttpasio INTERFACE PICO_ENABLE_CRYPTO)
+endif()
+
 # ---------------------------------------------------------------------------
 # http_demo  (main entry point — server + client demo)
 # ---------------------------------------------------------------------------
@@ -60,9 +150,14 @@ target_link_libraries(http_demo PRIVATE picohttpasio)
 # ---------------------------------------------------------------------------
 enable_testing()
 
+# Test cert directory for HTTPS tests
+set(PICO_TEST_CERT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/certs")
+
 function(pico_test name)
     add_executable(${name} tests/${name}.cpp)
     target_link_libraries(${name} PRIVATE picohttpasio Catch2::Catch2WithMain)
+    target_compile_definitions(${name} PRIVATE
+        PICO_TEST_CERT_DIR="${PICO_TEST_CERT_DIR}")
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
@@ -72,6 +167,17 @@ pico_test(test_response)
 pico_test(test_router)
 pico_test(test_websocket)
 pico_test(test_integration)
+
+if (PICO_ENABLE_CRYPTO)
+    pico_test(test_crypto)
+endif()
+
+if (PICO_ENABLE_TLS)
+    pico_test(test_coro)
+else()
+    # Still build coro test but without TLS assertions
+    pico_test(test_coro)
+endif()
 
 # ---------------------------------------------------------------------------
 # Examples

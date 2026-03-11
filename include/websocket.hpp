@@ -1,5 +1,11 @@
 #pragma once
 
+// OpenSSL headers MUST be included before any namespace declarations
+// because they use C-linkage declarations.
+#ifdef PICO_ENABLE_TLS
+#include <openssl/evp.h>
+#endif
+
 #include "response.hpp"
 #include <asio.hpp>
 #include <array>
@@ -16,11 +22,69 @@ namespace pico {
 namespace ws {
 
 // ---------------------------------------------------------------------------
-// SHA-1 (RFC 3174) — inline, no external crypto dependency
-// Used only for the WebSocket handshake key computation.
+// SHA-1 for the WebSocket handshake key (RFC 6455 §4.1).
+//
+// When OpenSSL is available (PICO_ENABLE_TLS) we use the EVP API which is
+// correct across OpenSSL 1.x and 3.x.  When it is not, we fall back to a
+// small self-contained implementation (RFC 3174) that has zero dependencies.
 // ---------------------------------------------------------------------------
+
 namespace detail {
 
+// sha1_raw: returns 20-byte SHA-1 digest
+inline void sha1_raw(const uint8_t* data, size_t len, uint8_t out[20]) {
+#ifdef PICO_ENABLE_TLS
+    // Modern EVP API — works with both OpenSSL 1.x and 3.x
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    unsigned int digest_len = 0;
+    EVP_DigestInit_ex(ctx, EVP_sha1(), nullptr);
+    EVP_DigestUpdate(ctx, data, len);
+    EVP_DigestFinal_ex(ctx, out, &digest_len);
+    EVP_MD_CTX_free(ctx);
+#else
+    // Fallback: portable inline SHA-1 (RFC 3174)
+    auto sha1_impl = [](const uint8_t* d, size_t n) -> std::array<uint32_t, 5> {
+        uint32_t h0 = 0x67452301u, h1 = 0xEFCDAB89u, h2 = 0x98BADCFEu,
+                 h3 = 0x10325476u, h4 = 0xC3D2E1F0u;
+        std::vector<uint8_t> msg(d, d + n);
+        msg.push_back(0x80);
+        while ((msg.size() % 64) != 56) msg.push_back(0x00);
+        uint64_t bit_len = static_cast<uint64_t>(n) * 8;
+        for (int i = 7; i >= 0; --i)
+            msg.push_back(static_cast<uint8_t>((bit_len >> (i * 8)) & 0xFF));
+        auto rotl = [](uint32_t v, unsigned s) { return (v << s) | (v >> (32 - s)); };
+        for (size_t chunk = 0; chunk < msg.size(); chunk += 64) {
+            uint32_t w[80];
+            for (int i = 0; i < 16; ++i)
+                w[i] = (uint32_t(msg[chunk+i*4])<<24)|(uint32_t(msg[chunk+i*4+1])<<16)
+                      |(uint32_t(msg[chunk+i*4+2])<<8)|uint32_t(msg[chunk+i*4+3]);
+            for (int i = 16; i < 80; ++i)
+                w[i] = rotl(w[i-3]^w[i-8]^w[i-14]^w[i-16], 1);
+            uint32_t a=h0,b=h1,c=h2,d2=h3,e=h4;
+            for (int i = 0; i < 80; ++i) {
+                uint32_t f,k;
+                if      (i<20){f=(b&c)|(~b&d2);k=0x5A827999u;}
+                else if (i<40){f=b^c^d2;       k=0x6ED9EBA1u;}
+                else if (i<60){f=(b&c)|(b&d2)|(c&d2);k=0x8F1BBCDCu;}
+                else          {f=b^c^d2;       k=0xCA62C1D6u;}
+                uint32_t tmp=rotl(a,5)+f+e+k+w[i];
+                e=d2;d2=c;c=rotl(b,30);b=a;a=tmp;
+            }
+            h0+=a;h1+=b;h2+=c;h3+=d2;h4+=e;
+        }
+        return {h0,h1,h2,h3,h4};
+    };
+    auto h = sha1_impl(data, len);
+    for (int i = 0; i < 5; ++i) {
+        out[i*4]   = (h[i]>>24)&0xFF;
+        out[i*4+1] = (h[i]>>16)&0xFF;
+        out[i*4+2] = (h[i]>>8) &0xFF;
+        out[i*4+3] =  h[i]     &0xFF;
+    }
+#endif
+}
+
+// Keep the old sha1() for backward compat with tests (returns uint32_t array)
 inline std::array<uint32_t, 5> sha1(const uint8_t* data, size_t len) {
     uint32_t h0 = 0x67452301u;
     uint32_t h1 = 0xEFCDAB89u;
@@ -92,14 +156,8 @@ inline std::string ws_accept_key(std::string_view client_key) {
     static constexpr std::string_view magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     std::string input(client_key);
     input += magic;
-    auto hash = detail::sha1(reinterpret_cast<const uint8_t*>(input.data()), input.size());
     uint8_t raw[20];
-    for (int i = 0; i < 5; ++i) {
-        raw[i*4]   = (hash[i] >> 24) & 0xFF;
-        raw[i*4+1] = (hash[i] >> 16) & 0xFF;
-        raw[i*4+2] = (hash[i] >>  8) & 0xFF;
-        raw[i*4+3] =  hash[i]        & 0xFF;
-    }
+    detail::sha1_raw(reinterpret_cast<const uint8_t*>(input.data()), input.size(), raw);
     return detail::base64_encode(raw, 20);
 }
 
