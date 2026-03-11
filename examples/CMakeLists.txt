@@ -1,0 +1,8 @@
+function(pico_example name)
+    add_executable(${name} ${name}.cpp)
+    target_link_libraries(${name} PRIVATE picohttpasio)
+endfunction()
+
+pico_example(simple_server)
+pico_example(rest_api)
+pico_example(websocket_echo)
