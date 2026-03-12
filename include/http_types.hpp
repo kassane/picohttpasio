@@ -13,7 +13,7 @@ enum class Method : uint8_t {
     GET,
     POST,
     PUT,
-    DELETE,
+    DEL,      // HTTP DELETE — named DEL to avoid collision with winnt.h #define DELETE
     PATCH,
     HEAD,
     OPTIONS,
@@ -24,7 +24,7 @@ inline Method method_from_string(std::string_view s) noexcept {
     if (s == "GET")     return Method::GET;
     if (s == "POST")    return Method::POST;
     if (s == "PUT")     return Method::PUT;
-    if (s == "DELETE")  return Method::DELETE;
+    if (s == "DELETE")  return Method::DEL;
     if (s == "PATCH")   return Method::PATCH;
     if (s == "HEAD")    return Method::HEAD;
     if (s == "OPTIONS") return Method::OPTIONS;
@@ -36,7 +36,7 @@ inline std::string_view method_to_string(Method m) noexcept {
         case Method::GET:     return "GET";
         case Method::POST:    return "POST";
         case Method::PUT:     return "PUT";
-        case Method::DELETE:  return "DELETE";
+        case Method::DEL:     return "DELETE";
         case Method::PATCH:   return "PATCH";
         case Method::HEAD:    return "HEAD";
         case Method::OPTIONS: return "OPTIONS";

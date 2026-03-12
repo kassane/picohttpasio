@@ -127,7 +127,7 @@ TEST_CASE("dispatch: any() matches all methods", "[router][dispatch]") {
         res = Response::ok("pong");
     });
 
-    for (auto m : {Method::GET, Method::POST, Method::PUT, Method::DELETE}) {
+    for (auto m : {Method::GET, Method::POST, Method::PUT, Method::DEL}) {
         Request  req = make_req(m, "/ping");
         Response res = Response::make();
         REQUIRE(router.dispatch(req, res));
@@ -239,7 +239,7 @@ TEST_CASE("DELETE route registered via del()", "[router][dispatch]") {
         res = Response::no_content();
     });
 
-    Request  req = make_req(Method::DELETE, "/item/5");
+    Request  req = make_req(Method::DEL, "/item/5");
     Response res = Response::make();
     REQUIRE(router.dispatch(req, res));
     REQUIRE(called);

@@ -32,7 +32,7 @@ public:
     Router& get    (std::string_view pattern, Handler h) { return add(Method::GET,     pattern, std::move(h)); }
     Router& post   (std::string_view pattern, Handler h) { return add(Method::POST,    pattern, std::move(h)); }
     Router& put    (std::string_view pattern, Handler h) { return add(Method::PUT,     pattern, std::move(h)); }
-    Router& del    (std::string_view pattern, Handler h) { return add(Method::DELETE,  pattern, std::move(h)); }
+    Router& del    (std::string_view pattern, Handler h) { return add(Method::DEL,     pattern, std::move(h)); }
     Router& patch  (std::string_view pattern, Handler h) { return add(Method::PATCH,   pattern, std::move(h)); }
     Router& head   (std::string_view pattern, Handler h) { return add(Method::HEAD,    pattern, std::move(h)); }
     Router& options(std::string_view pattern, Handler h) { return add(Method::OPTIONS, pattern, std::move(h)); }

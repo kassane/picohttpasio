@@ -7,7 +7,7 @@ TEST_CASE("method_from_string round-trips known methods", "[types]") {
     REQUIRE(method_from_string("GET")     == Method::GET);
     REQUIRE(method_from_string("POST")    == Method::POST);
     REQUIRE(method_from_string("PUT")     == Method::PUT);
-    REQUIRE(method_from_string("DELETE")  == Method::DELETE);
+    REQUIRE(method_from_string("DELETE")  == Method::DEL);
     REQUIRE(method_from_string("PATCH")   == Method::PATCH);
     REQUIRE(method_from_string("HEAD")    == Method::HEAD);
     REQUIRE(method_from_string("OPTIONS") == Method::OPTIONS);
@@ -19,7 +19,7 @@ TEST_CASE("method_to_string produces correct strings", "[types]") {
     REQUIRE(method_to_string(Method::GET)     == "GET");
     REQUIRE(method_to_string(Method::POST)    == "POST");
     REQUIRE(method_to_string(Method::PUT)     == "PUT");
-    REQUIRE(method_to_string(Method::DELETE)  == "DELETE");
+    REQUIRE(method_to_string(Method::DEL)  == "DELETE");
     REQUIRE(method_to_string(Method::PATCH)   == "PATCH");
     REQUIRE(method_to_string(Method::HEAD)    == "HEAD");
     REQUIRE(method_to_string(Method::OPTIONS) == "OPTIONS");

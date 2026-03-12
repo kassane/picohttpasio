@@ -26,7 +26,7 @@ public:
     RequestBuilder& get (std::string_view path) { method_ = Method::GET;    path_ = path; return *this; }
     RequestBuilder& post(std::string_view path) { method_ = Method::POST;   path_ = path; return *this; }
     RequestBuilder& put (std::string_view path) { method_ = Method::PUT;    path_ = path; return *this; }
-    RequestBuilder& del (std::string_view path) { method_ = Method::DELETE; path_ = path; return *this; }
+    RequestBuilder& del (std::string_view path) { method_ = Method::DEL;    path_ = path; return *this; }
 
     RequestBuilder& path(std::string_view p)    { path_ = p;    return *this; }
     RequestBuilder& host(std::string_view h)    { host_ = h;    return *this; }

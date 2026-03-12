@@ -90,6 +90,17 @@ if (PICO_ENABLE_TLS)
     target_compile_definitions(picohttpasio INTERFACE PICO_ENABLE_TLS)
 endif()
 
+if (WIN32)
+    # _WIN32_WINNT=0x0A00 — target Windows 10+ (suppresses ASIO's "assuming 0x0601" warning)
+    # WIN32_LEAN_AND_MEAN  — exclude rarely-used Windows API surface
+    # NOMINMAX             — prevent <windows.h> min/max macro conflicts with std::min/max
+    target_compile_definitions(picohttpasio INTERFACE
+        _WIN32_WINNT=0x0A00
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+    )
+endif()
+
 # ---------------------------------------------------------------------------
 # http_demo  (main entry point — server + client demo)
 # ---------------------------------------------------------------------------
