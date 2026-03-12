@@ -74,10 +74,12 @@ jobs:
 
       # -----------------------------------------------------------------------
       # Build & test
+      # --config Release is required for VS multi-config generators (Windows);
+      # it is a no-op for single-config generators (Make/Ninja on Linux/macOS).
       # -----------------------------------------------------------------------
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build --parallel --config Release
 
       - name: Test
         working-directory: build
-        run: ctest --output-on-failure --parallel 4
+        run: ctest --output-on-failure --parallel 4 -C Release
