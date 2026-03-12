@@ -6,8 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Options
-option(PICO_ENABLE_TLS    "Enable HTTPS/TLS via OpenSSL"    ON)
-option(PICO_ENABLE_CRYPTO "Enable crypto primitives via libsodium" ON)
+option(PICO_ENABLE_TLS "Enable HTTPS/TLS and crypto primitives via OpenSSL" ON)
 
 include(FetchContent)
 
@@ -74,49 +73,6 @@ if (PICO_ENABLE_TLS)
 endif()
 
 # ---------------------------------------------------------------------------
-# libsodium — cryptographic primitives
-# ---------------------------------------------------------------------------
-if (PICO_ENABLE_CRYPTO)
-    # Try pkg-config first (fastest on Linux)
-    find_package(PkgConfig QUIET)
-    if (PkgConfig_FOUND)
-        pkg_check_modules(sodium IMPORTED_TARGET libsodium QUIET)
-    endif()
-
-    if (sodium_FOUND)
-        message(STATUS "libsodium found via pkg-config (${sodium_VERSION})")
-        set(PICO_SODIUM_TARGET PkgConfig::sodium)
-    else()
-        # Fall back to find_package with our custom module
-        list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-        find_package(Sodium QUIET)
-        if (Sodium_FOUND)
-            message(STATUS "libsodium found via FindSodium (${Sodium_VERSION})")
-            set(PICO_SODIUM_TARGET Sodium::Sodium)
-        else()
-            # Last resort: FetchContent with a cmake wrapper
-            message(STATUS "libsodium not found on system — trying FetchContent (robinlinden/libsodium-cmake)...")
-            FetchContent_Declare(libsodium_cmake
-                GIT_REPOSITORY https://github.com/robinlinden/libsodium-cmake.git
-                GIT_TAG        main
-                GIT_SHALLOW    TRUE)
-            FetchContent_MakeAvailable(libsodium_cmake)
-            if (TARGET sodium)
-                message(STATUS "libsodium built via FetchContent")
-                set(PICO_SODIUM_TARGET sodium)
-                set(sodium_FOUND TRUE)
-            else()
-                message(WARNING
-                    "libsodium not available — crypto features disabled.\n"
-                    "Install: apt-get install libsodium-dev  (Debian/Ubuntu)\n"
-                    "         brew install libsodium         (macOS)")
-                set(PICO_ENABLE_CRYPTO OFF)
-            endif()
-        endif()
-    endif()
-endif()
-
-# ---------------------------------------------------------------------------
 # picohttpparser (C library, compiled once)
 # ---------------------------------------------------------------------------
 add_library(picohttpparser STATIC src/picohttpparser.c)
@@ -132,11 +88,6 @@ target_link_libraries(picohttpasio INTERFACE picohttpparser asio)
 if (PICO_ENABLE_TLS)
     target_link_libraries(picohttpasio INTERFACE OpenSSL::SSL OpenSSL::Crypto)
     target_compile_definitions(picohttpasio INTERFACE PICO_ENABLE_TLS)
-endif()
-
-if (PICO_ENABLE_CRYPTO)
-    target_link_libraries(picohttpasio INTERFACE ${PICO_SODIUM_TARGET})
-    target_compile_definitions(picohttpasio INTERFACE PICO_ENABLE_CRYPTO)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -168,7 +119,7 @@ pico_test(test_router)
 pico_test(test_websocket)
 pico_test(test_integration)
 
-if (PICO_ENABLE_CRYPTO)
+if (PICO_ENABLE_TLS)
     pico_test(test_crypto)
 endif()
 

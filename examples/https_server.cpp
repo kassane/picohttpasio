@@ -54,9 +54,8 @@ int main(int argc, char* argv[]) {
                     R"({"server":"picohttpasio","tls":true,"version":"0.3"})");
             });
 
-#ifdef PICO_ENABLE_CRYPTO
-        // Example: generate a shared key and show its hex on startup
-        pico::crypto::init();
+#ifdef PICO_ENABLE_TLS
+        // Example: generate a demo AES-256-GCM session key on startup
         auto key = pico::crypto::secretbox::generate_key();
         std::cout << "Demo session key: " << pico::crypto::to_hex(key) << '\n';
 #endif

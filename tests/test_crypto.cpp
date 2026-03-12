@@ -1,6 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
-#ifdef PICO_ENABLE_CRYPTO
+#ifdef PICO_ENABLE_TLS
 #include "crypto.hpp"
 #include <cstring>
 #include <set>
@@ -46,9 +46,9 @@ TEST_CASE("sha512: empty string known vector", "[crypto][hash]") {
     REQUIRE(hex.substr(0, 8) == "cf83e135");
 }
 
-TEST_CASE("blake2b produces 32-byte digest", "[crypto][hash]") {
+TEST_CASE("blake2b produces 64-byte digest", "[crypto][hash]") {
     auto h = blake2b("test");
-    REQUIRE(h.size() == 32);
+    REQUIRE(h.size() == 64);
 }
 
 TEST_CASE("blake2b differs with and without key", "[crypto][hash]") {
@@ -213,8 +213,7 @@ TEST_CASE("to_hex produces correct lowercase hex", "[crypto][util]") {
 }
 
 #else
-// If libsodium was not compiled in, provide a placeholder test
-TEST_CASE("crypto module skipped (PICO_ENABLE_CRYPTO not set)", "[crypto]") {
-    SUCCEED("libsodium support not compiled — skipping crypto tests");
+TEST_CASE("crypto module skipped (PICO_ENABLE_TLS not set)", "[crypto]") {
+    SUCCEED("TLS/OpenSSL not compiled — skipping crypto tests");
 }
 #endif
