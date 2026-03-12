@@ -1,0 +1,58 @@
+name: Benchmark
+
+on:
+  push:
+    branches: [main, master, "claude/**"]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  techempower:
+    name: TechEmpower-style benchmark
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libssl-dev wrk
+
+      - name: Build (Release)
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPICO_ENABLE_TLS=ON
+          cmake --build build --parallel --target techempower_bench
+
+      - name: Start server
+        run: |
+          ./build/examples/techempower_bench &
+          echo "SERVER_PID=$!" >> "$GITHUB_ENV"
+          # Wait until the port is accepting connections (max 5 s)
+          for i in $(seq 1 10); do
+            curl -sf http://localhost:8080/plaintext > /dev/null && break
+            sleep 0.5
+          done
+
+      # -----------------------------------------------------------------------
+      # Warmup + benchmark — results are informational, not a pass/fail gate
+      # -----------------------------------------------------------------------
+      - name: Warmup
+        run: wrk -t2 -c32 -d3s http://localhost:8080/plaintext > /dev/null
+
+      - name: Benchmark — Plaintext (category 6)
+        run: |
+          echo "### Plaintext — /plaintext"
+          wrk -t4 -c128 -d10s --latency http://localhost:8080/plaintext
+
+      - name: Benchmark — JSON serialization (category 1)
+        run: |
+          echo "### JSON — /json"
+          wrk -t4 -c128 -d10s --latency http://localhost:8080/json
+
+      - name: Stop server
+        if: always()
+        run: kill "$SERVER_PID" 2>/dev/null || true

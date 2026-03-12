@@ -1,6 +1,7 @@
 #pragma once
 
 #include "picohttpparser.h"
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <string>
@@ -96,7 +97,7 @@ public:
                 out += ' ';
             } else if (s[i] == '%' && i + 2 < s.size()) {
                 char hex[3] = { s[i+1], s[i+2], '\0' };
-                out += static_cast<char>(std::strtol(hex, nullptr, 16));
+                out += static_cast<char>(strtol(hex, nullptr, 16));
                 i += 2;
             } else {
                 out += s[i];
