@@ -1,5 +1,7 @@
 # picohttpasio
 
+[![CI](https://github.com/kassane/picohttpasio/actions/workflows/ci.yml/badge.svg)](https://github.com/kassane/picohttpasio/actions/workflows/ci.yml)
+
 A lightweight, user-friendly C++23 HTTP/1.1 SDK built on
 [standalone ASIO](https://github.com/chriskohlhoff/asio) and
 [picohttpparser](https://github.com/h2o/picohttpparser).
@@ -14,7 +16,7 @@ with an Express-style developer experience.
 - **Middleware chain** — global or prefix-scoped; short-circuit or pass-through
 - **Fluent Response builder** — status, headers, body, JSON, HTML, redirect
 - **Keep-alive / HTTP pipelining** — reuse connections for multiple requests
-- **WebSocket upgrade** — `Upgrade: websocket` handled automatically; RFC-compliant
+- **WebSocket** — handled automatically; RFC-compliant
   handshake (inline SHA-1) with full frame codec
 - **HTTPS/TLS** — optional; wraps ASIO SSL with OpenSSL (enabled by `-DPICO_ENABLE_TLS=ON`)
 - **Crypto primitives** — SHA-256/512, BLAKE2b, Ed25519 signatures, AES-256-GCM AEAD,
