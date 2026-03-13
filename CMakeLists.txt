@@ -18,31 +18,28 @@ else()
     set(_PICO_TOPLEVEL OFF)
 endif()
 
-option(PICO_BUILD_TESTS      "Build the Catch2 test suite"          ${_PICO_TOPLEVEL})
-option(PICO_BUILD_EXAMPLES   "Build the example programs"           ${_PICO_TOPLEVEL})
+option(PICO_BUILD_TESTS "Build the Catch2 test suite" ${_PICO_TOPLEVEL})
+option(PICO_BUILD_EXAMPLES "Build the example programs" ${_PICO_TOPLEVEL})
 option(PICO_BUILD_BENCHMARKS "Build the TechEmpower benchmark server" OFF)
 
 include(FetchContent)
 
 # ---------------------------------------------------------------------------
-# ASIO (standalone, header-only)
+# ASIO — now using OlivierLDff/asio.cmake
 # ---------------------------------------------------------------------------
-find_package(Asio 1.38.0 QUIET)
-if(NOT Asio_FOUND)
-    FetchContent_Declare(asio
-        GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
-        GIT_TAG asio-1-38-0
-        GIT_SHALLOW TRUE)
-    FetchContent_GetProperties(asio)
-    if(NOT asio_POPULATED)
-        FetchContent_Populate(asio)
-        find_package(Threads REQUIRED)
-        add_library(asio INTERFACE)
-        target_include_directories(asio INTERFACE ${asio_SOURCE_DIR}/asio/include)
-        target_compile_definitions(asio INTERFACE ASIO_STANDALONE ASIO_NO_DEPRECATED)
-        target_link_libraries(asio INTERFACE Threads::Threads)
-    endif()
-endif()
+set(ASIO_USE_CPM OFF)
+set(ASIO_CPM_FETCHCONTENT_COMPAT ON)
+set(ASIO_SEPARATE_COMPILATION OFF)
+set(ASIO_TAG asio-1-38-0)
+set(ASIO_NO_DEPRECATED ON)
+
+FetchContent_Declare(
+    asiocmake
+    GIT_REPOSITORY https://github.com/OlivierLDff/asio.cmake
+    GIT_TAG main
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(asiocmake)
 
 # ---------------------------------------------------------------------------
 # Catch2 v3 (test framework — only when tests are enabled)
@@ -95,9 +92,8 @@ FetchContent_Declare(picohttpparser
     GIT_REPOSITORY https://github.com/h2o/picohttpparser.git
     GIT_TAG master
     GIT_SHALLOW TRUE)
-FetchContent_GetProperties(picohttpparser)
-if(NOT picohttpparser_POPULATED)
-    FetchContent_Populate(picohttpparser)
+FetchContent_MakeAvailable(picohttpparser)
+if(NOT TARGET picohttpparser)
     add_library(picohttpparser STATIC ${picohttpparser_SOURCE_DIR}/picohttpparser.c)
     target_include_directories(picohttpparser PUBLIC ${picohttpparser_SOURCE_DIR})
 endif()
