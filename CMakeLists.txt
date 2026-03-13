@@ -27,11 +27,11 @@ include(FetchContent)
 # ---------------------------------------------------------------------------
 # ASIO (standalone, header-only)
 # ---------------------------------------------------------------------------
-find_package(Asio 1.28.1 QUIET)
+find_package(Asio 1.38.0 QUIET)
 if(NOT Asio_FOUND)
     FetchContent_Declare(asio
         GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
-        GIT_TAG asio-1-28-1
+        GIT_TAG asio-1-38-0
         GIT_SHALLOW TRUE)
     FetchContent_GetProperties(asio)
     if(NOT asio_POPULATED)
