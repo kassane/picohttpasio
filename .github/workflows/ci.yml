@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  build:
+    name: ${{ matrix.os }} / TLS=${{ matrix.tls }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        tls: [ON, OFF]
+
+    steps:
+      - uses: actions/checkout@main
+
+      # -----------------------------------------------------------------------
+      # FetchContent dependency cache (asio, catch2, picohttpparser [, openssl])
+      # -----------------------------------------------------------------------
+      - name: Cache FetchContent dependencies
+        uses: actions/cache@main
+        with:
+          path: build/_deps
+          key: deps-${{ matrix.os }}-tls${{ matrix.tls }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            deps-${{ matrix.os }}-tls${{ matrix.tls }}-
+            deps-${{ matrix.os }}-
+
+      # -----------------------------------------------------------------------
+      # OpenSSL — install only when TLS is ON
+      # -----------------------------------------------------------------------
+      - name: Install OpenSSL (Ubuntu)
+        if: runner.os == 'Linux' && matrix.tls == 'ON'
+        run: sudo apt-get update -qq && sudo apt-get install -y libssl-dev
+
+      - name: Install OpenSSL (macOS)
+        if: runner.os == 'macOS' && matrix.tls == 'ON'
+        run: |
+          brew install openssl
+          echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl)" >> "$GITHUB_ENV"
+
+      - name: Install OpenSSL (Windows)
+        if: runner.os == 'Windows' && matrix.tls == 'ON'
+        shell: pwsh
+        run: |
+          choco install openssl --no-progress -y
+          $root = @(
+            'C:/Program Files/OpenSSL-Win64',
+            'C:/Program Files/OpenSSL'
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          echo "OPENSSL_ROOT_DIR=$root" >> $env:GITHUB_ENV
+
+      # -----------------------------------------------------------------------
+      # Configure
+      # matrix.tls is a fixed enum value (ON/OFF) — not user-controlled input
+      # -----------------------------------------------------------------------
+      - name: Configure (Unix)
+        if: runner.os != 'Windows'
+        env:
+          TLS: ${{ matrix.tls }}
+          OPENSSL_ROOT: ${{ env.OPENSSL_ROOT_DIR }}
+        run: |
+          EXTRA=""
+          if [ -n "$OPENSSL_ROOT" ]; then
+            EXTRA="-DOPENSSL_ROOT_DIR=$OPENSSL_ROOT"
+          fi
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DPICO_ENABLE_TLS="$TLS" \
+            -DPICO_BUILD_TESTS=ON \
+            -DPICO_BUILD_EXAMPLES=ON \
+            -DPICO_BUILD_BENCHMARKS=OFF \
+            $EXTRA
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        env:
+          TLS: ${{ matrix.tls }}
+        shell: pwsh
+        run: |
+          $extra = @()
+          if ($env:OPENSSL_ROOT_DIR) {
+            $extra += "-DOPENSSL_ROOT_DIR=$env:OPENSSL_ROOT_DIR"
+          }
+          cmake -B build `
+            -DCMAKE_BUILD_TYPE=Debug `
+            "-DPICO_ENABLE_TLS=$env:TLS" `
+            -DPICO_BUILD_TESTS=ON `
+            -DPICO_BUILD_EXAMPLES=ON `
+            -DPICO_BUILD_BENCHMARKS=OFF `
+            @extra
+
+      # -----------------------------------------------------------------------
+      # Build & test
+      # --config Debug required for VS multi-config generators (Windows);
+      # no-op for single-config generators (Make/Ninja on Linux/macOS).
+      # -----------------------------------------------------------------------
+      - name: Build
+        run: cmake --build build --parallel --config Debug
+
+      - name: Test
+        working-directory: build
+        run: ctest --output-on-failure --parallel 4 -C Debug

@@ -1,120 +1,239 @@
-#ifndef client_hpp
-#define client_hpp
+#pragma once
 
+#include "http_types.hpp"
 #include "picohttpwrapper.hpp"
 #include <asio.hpp>
+#include <functional>
 #include <iostream>
+#include <optional>
 #include <string>
+#include <string_view>
 
 using asio::ip::tcp;
 
-class HTTPClient {
-public:
-  HTTPClient(asio::io_context &io_context, const std::string &server_ip,
-             unsigned short port)
-      : resolver_(io_context), socket_(io_context), response_data_(),
-        request_() {
-    resolver_.async_resolve(
-        server_ip, std::to_string(port),
-        [this](std::error_code ec, tcp::resolver::results_type endpoints) {
-          if (!ec) {
-            asio::async_connect(socket_, endpoints,
-                                [this](std::error_code ec, tcp::endpoint) {
-                                  if (!ec) {
-                                    sendRequest();
-                                  }
-                                });
-          }
-        });
-  }
+namespace pico {
 
-  // Method to set or modify the request string
-  void setRequest(const std::string &request) { request_ = request; }
+// ---------------------------------------------------------------------------
+// RequestBuilder — fluent HTTP request serializer
+// ---------------------------------------------------------------------------
+class RequestBuilder {
+public:
+    RequestBuilder& method(Method m) {
+        method_ = m;
+        return *this;
+    }
+
+    RequestBuilder& get (std::string_view path) { method_ = Method::GET;    path_ = path; return *this; }
+    RequestBuilder& post(std::string_view path) { method_ = Method::POST;   path_ = path; return *this; }
+    RequestBuilder& put (std::string_view path) { method_ = Method::PUT;    path_ = path; return *this; }
+    RequestBuilder& del (std::string_view path) { method_ = Method::DEL;    path_ = path; return *this; }
+
+    RequestBuilder& path(std::string_view p)    { path_ = p;    return *this; }
+    RequestBuilder& host(std::string_view h)    { host_ = h;    return *this; }
+
+    RequestBuilder& header(std::string name, std::string value) {
+        headers_.emplace_back(std::move(name), std::move(value));
+        return *this;
+    }
+
+    RequestBuilder& body(std::string data,
+                         std::string_view content_type = "text/plain; charset=utf-8") {
+        body_         = std::move(data);
+        content_type_ = std::string(content_type);
+        return *this;
+    }
+
+    RequestBuilder& json(std::string data) {
+        return body(std::move(data), "application/json");
+    }
+
+    RequestBuilder& keep_alive(bool v = true) { keep_alive_ = v; return *this; }
+
+    // Serialize to wire-format HTTP/1.1 request string.
+    std::string build() const {
+        std::string out;
+        out  = std::string(method_to_string(method_));
+        out += ' ';
+        out += path_.empty() ? "/" : path_;
+        out += " HTTP/1.1\r\n";
+
+        if (!host_.empty()) {
+            out += "Host: ";
+            out += host_;
+            out += "\r\n";
+        }
+
+        out += "Connection: ";
+        out += keep_alive_ ? "keep-alive" : "close";
+        out += "\r\n";
+
+        if (!body_.empty()) {
+            out += "Content-Type: ";
+            out += content_type_;
+            out += "\r\n";
+            out += "Content-Length: ";
+            out += std::to_string(body_.size());
+            out += "\r\n";
+        }
+
+        for (const auto& [k, v] : headers_) {
+            out += k;
+            out += ": ";
+            out += v;
+            out += "\r\n";
+        }
+
+        out += "\r\n";
+        out += body_;
+        return out;
+    }
 
 private:
-  void sendRequest() {
-    asio::async_write(
-        socket_, asio::buffer(request_),
-        [this](std::error_code ec, std::size_t /*bytes_transferred*/) {
-          if (!ec) {
-            readResponse();
-          }
-        });
-  }
-
-  void readResponse() {
-    asio::async_read_until(
-        socket_, response_data_, "\r\n\r\n",
-        [this](std::error_code ec, std::size_t /* bytes_transferred */) {
-          if (!ec) {
-            std::string response_str;
-            response_str.resize(response_data_.size());
-            response_data_.sgetn(&response_str[0], static_cast<std::streamsize>(
-                                                       response_str.size()));
-
-            HTTPRequest response_parser(response_str);
-            if (response_parser.parse()) {
-              std::cout << "HTTP Status Code: "
-                        << response_parser.getMinorVersion() << " "
-                        << response_parser.getPath() << " "
-                        << response_parser.getMinorVersion() << std::endl;
-
-              std::cout << "Response Headers:" << std::endl;
-              for (const auto &header : response_parser.getHeaders()) {
-                std::cout << header.first << ": " << header.second << std::endl;
-              }
-
-              int content_length = -1;
-              try {
-                content_length =
-                    std::stoi(response_parser.getHeader("Content-Length"));
-              } catch (std::exception &e) {
-                std::cerr << "Error parsing Content-Length header: " << e.what()
-                          << std::endl;
-              }
-
-              if (content_length > 0) {
-                // Read and print the response content
-                asio::async_read(
-                    socket_, response_data_,
-                    [this, content_length](std::error_code ec,
-                                           std::size_t /*bytes_transferred*/) {
-                      if (!ec) {
-                        std::string content;
-                        // content.resize(bytes_transferred);
-                        // response_data_.sgetn(&content[0],
-                        // static_cast<std::streamsize>(bytes_transferred));
-
-                        if (content.size() ==
-                            static_cast<size_t>(content_length)) {
-                          std::cout << "\nResponse Content:\n"
-                                    << content << std::endl;
-                        } else {
-                          std::cerr << "Content length mismatch." << std::endl;
-                        }
-                      } else {
-                        std::cerr << "Error reading response content: "
-                                  << ec.message() << std::endl;
-                      }
-                    });
-              } else {
-                std::cerr << "Invalid Content-Length header." << std::endl;
-              }
-            } else {
-              // Print the raw response for debugging
-              std::cerr << "Failed to parse HTTP response." << std::endl;
-              std::cerr << "Raw Response:\n" << response_str << std::endl;
-            }
-          } else {
-            std::cerr << "Error reading response headers: " << ec.message()
-                      << std::endl;
-          }
-        });
-  }
-
-  tcp::resolver resolver_;
-  tcp::socket socket_;
-  asio::streambuf response_data_;
-  std::string request_; // Editable request string
+    Method      method_       = Method::GET;
+    std::string path_         = "/";
+    std::string host_;
+    std::string body_;
+    std::string content_type_ = "text/plain; charset=utf-8";
+    bool        keep_alive_   = false;
+    std::vector<std::pair<std::string,std::string>> headers_;
 };
-#endif /* client_hpp */
+
+// ---------------------------------------------------------------------------
+// HTTPClient — async HTTP/1.1 client with keep-alive support
+//
+// Usage:
+//   HTTPClient client(io, "example.com", 80);
+//   auto req = RequestBuilder{}.get("/").host("example.com").build();
+//   client.request(req, [](auto opt_resp) { ... });
+// ---------------------------------------------------------------------------
+class HTTPClient {
+public:
+    using ResponseCallback = std::function<void(std::optional<HTTPResponse>)>;
+
+    HTTPClient(asio::io_context& io,
+               std::string host,
+               unsigned short port)
+        : resolver_(io)
+        , socket_(io)
+        , host_(std::move(host))
+        , port_(port) {}
+
+    // Send a pre-built request string; callback receives parsed response (or nullopt on error).
+    // If the connection is already open (keep-alive), skips re-connection.
+    void request(std::string wire_request, ResponseCallback cb) {
+        pending_request_  = std::move(wire_request);
+        pending_callback_ = std::move(cb);
+
+        if (connected_) {
+            sendRequest();
+        } else {
+            connect();
+        }
+    }
+
+    // Convenience: build and send a GET request.
+    void get(std::string_view path, ResponseCallback cb) {
+        auto req = RequestBuilder{}.get(path).host(host_).keep_alive(true).build();
+        request(std::move(req), std::move(cb));
+    }
+
+private:
+    void connect() {
+        resolver_.async_resolve(
+            host_, std::to_string(port_),
+            [this](std::error_code ec, tcp::resolver::results_type endpoints) {
+                if (ec) { invoke_callback(std::nullopt); return; }
+                asio::async_connect(socket_, endpoints,
+                    [this](std::error_code ec, tcp::endpoint) {
+                        if (ec) { invoke_callback(std::nullopt); return; }
+                        connected_ = true;
+                        sendRequest();
+                    });
+            });
+    }
+
+    void sendRequest() {
+        auto wire = std::make_shared<std::string>(std::move(pending_request_));
+        asio::async_write(socket_, asio::buffer(*wire),
+            [this, wire](std::error_code ec, size_t) {
+                if (ec) { connected_ = false; invoke_callback(std::nullopt); return; }
+                readResponseHeaders();
+            });
+    }
+
+    void readResponseHeaders() {
+        asio::async_read_until(
+            socket_, asio::dynamic_buffer(read_buf_), "\r\n\r\n",
+            [this](std::error_code ec, size_t header_bytes) {
+                if (ec) { connected_ = false; invoke_callback(std::nullopt); return; }
+                processResponse(header_bytes);
+            });
+    }
+
+    void processResponse(size_t header_bytes) {
+        std::string header_str = read_buf_.substr(0, header_bytes);
+        read_buf_.erase(0, header_bytes);
+
+        HTTPResponse parser(header_str);
+        if (!parser.parse()) {
+            invoke_callback(std::nullopt);
+            return;
+        }
+
+        size_t content_len = 0;
+        const auto& cl = parser.header("Content-Length");
+        if (!cl.empty()) {
+            try { content_len = static_cast<size_t>(std::stoul(cl)); }
+            catch (...) {}
+        }
+
+        if (content_len == 0) {
+            // Check if server closed connection
+            const auto& conn = parser.header("Connection");
+            if (conn == "close") connected_ = false;
+            invoke_callback(parser);
+            return;
+        }
+
+        // Read body
+        if (read_buf_.size() >= content_len) {
+            // Already buffered
+            // Re-parse with body appended so caller can inspect Content-Length
+            const auto& conn = parser.header("Connection");
+            if (conn == "close") connected_ = false;
+            invoke_callback(parser);
+            read_buf_.erase(0, content_len);
+        } else {
+            size_t remaining = content_len - read_buf_.size();
+            asio::async_read(socket_, asio::dynamic_buffer(read_buf_),
+                asio::transfer_exactly(remaining),
+                [this, parser = std::move(parser), content_len](std::error_code ec, size_t) mutable {
+                    if (ec) { connected_ = false; invoke_callback(std::nullopt); return; }
+                    const auto& conn = parser.header("Connection");
+                    if (conn == "close") connected_ = false;
+                    invoke_callback(parser);
+                    read_buf_.erase(0, content_len);
+                });
+        }
+    }
+
+    void invoke_callback(std::optional<HTTPResponse> resp) {
+        if (pending_callback_) {
+            auto cb = std::move(pending_callback_);
+            pending_callback_ = nullptr;
+            cb(std::move(resp));
+        }
+    }
+
+    tcp::resolver  resolver_;
+    tcp::socket    socket_;
+    std::string    host_;
+    unsigned short port_;
+    bool           connected_ = false;
+
+    std::string      read_buf_;
+    std::string      pending_request_;
+    ResponseCallback pending_callback_;
+};
+
+} // namespace pico
