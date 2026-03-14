@@ -32,19 +32,18 @@ FetchContent_Declare(asio
     GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
     GIT_TAG asio-1-38-0
     GIT_SHALLOW TRUE)
-FetchContent_MakeAvailable(asio)
 
-# ASIO ships no CMakeLists.txt — create the INTERFACE target ourselves.
-# We set INTERFACE_INCLUDE_DIRECTORIES explicitly so that it propagates
-# correctly on all CMake generators, including MSVC/MSBuild.
-if(NOT TARGET asio)
-    add_library(asio INTERFACE)
-    target_include_directories(asio SYSTEM INTERFACE
-        ${asio_SOURCE_DIR}/asio/include)
-    target_compile_definitions(asio INTERFACE
-        ASIO_STANDALONE
-        ASIO_NO_DEPRECATED)
+FetchContent_GetProperties(asio)
+if(NOT asio_POPULATED)
+    FetchContent_Populate(asio)
 endif()
+
+add_library(asio INTERFACE)
+target_include_directories(asio SYSTEM INTERFACE
+    "${asio_SOURCE_DIR}/asio/include")
+target_compile_definitions(asio INTERFACE
+    ASIO_STANDALONE
+    ASIO_NO_DEPRECATED)
 
 # ---------------------------------------------------------------------------
 # Catch2 v3 (test framework — only when tests are enabled)

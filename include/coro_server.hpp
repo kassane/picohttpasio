@@ -98,6 +98,16 @@ asio::awaitable<void> run_session(Socket socket,
             catch (...) {}
         }
 
+        // Reject oversized payloads to prevent memory-exhaustion DoS
+        constexpr size_t max_body_size = 10 * 1024 * 1024; // 10 MB
+        if (content_len > max_body_size) {
+            try {
+                auto wire = Response::make(StatusCode::PayloadTooLarge).serialize();
+                co_await asio::async_write(socket, asio::buffer(wire), asio::use_awaitable);
+            } catch (...) {}
+            break;
+        }
+
         if (content_len > 0 && buf.size() < content_len) {
             try {
                 co_await asio::async_read(

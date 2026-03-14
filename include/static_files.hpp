@@ -180,16 +180,34 @@ inline std::optional<std::string> gzip_compress(std::string_view data) {
 }
 #endif // PICO_ENABLE_COMPRESSION
 
+// HTML-escape a string to prevent XSS in generated HTML pages.
+inline std::string html_escape(std::string_view s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        switch (c) {
+            case '&':  out += "&amp;";  break;
+            case '<':  out += "&lt;";   break;
+            case '>':  out += "&gt;";   break;
+            case '"':  out += "&quot;"; break;
+            case '\'': out += "&#39;";  break;
+            default:   out += c;
+        }
+    }
+    return out;
+}
+
 // Build a simple HTML directory listing page.
 inline std::string make_dir_listing(const std::string& url_path,
                                      const std::filesystem::path& dir_path) {
+    std::string safe_path = html_escape(url_path);
     std::string html;
     html.reserve(4096);
     html += "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\">"
             "<title>Index of ";
-    html += url_path;
+    html += safe_path;
     html += "</title></head><body><h1>Index of ";
-    html += url_path;
+    html += safe_path;
     html += "</h1><hr><pre>\n";
 
     if (url_path != "/")
@@ -199,10 +217,11 @@ inline std::string make_dir_listing(const std::string& url_path,
     for (const auto& entry : std::filesystem::directory_iterator(dir_path, ec)) {
         auto name = entry.path().filename().string();
         if (entry.is_directory(ec)) name += '/';
+        auto safe_name = html_escape(name);
         html += "<a href=\"";
-        html += name;
+        html += safe_name;
         html += "\">";
-        html += name;
+        html += safe_name;
         html += "</a>\n";
     }
     html += "</pre><hr></body></html>";
@@ -241,6 +260,16 @@ inline Response serve_static(const Request& req,
         std::string_view rel = url_path;
         if (rel.front() == '/') rel.remove_prefix(1);
         fpath /= rel;
+    }
+
+    // Verify the resolved path stays inside root_dir (defense-in-depth
+    // against encoded traversal sequences or symlink escapes).
+    {
+        auto canonical_root = fs::weakly_canonical(root_dir);
+        auto canonical_path = fs::weakly_canonical(fpath);
+        auto root_str = canonical_root.string();
+        if (canonical_path.string().substr(0, root_str.size()) != root_str)
+            return Response::bad_request("Invalid path");
     }
 
     std::error_code ec;
