@@ -7,10 +7,12 @@ if(PICO_BUILD_EXAMPLES)
     pico_example(simple_server)
     pico_example(rest_api)
     pico_example(websocket_echo)
+    pico_example(websocket_client)
 
     if(PICO_ENABLE_TLS)
         pico_example(coro_server)
         pico_example(https_server)
+        pico_example(https_client)
     endif()
 endif()
 

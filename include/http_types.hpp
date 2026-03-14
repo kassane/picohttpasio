@@ -55,6 +55,7 @@ enum class StatusCode : unsigned {
     Created             = 201,
     Accepted            = 202,
     NoContent           = 204,
+    PartialContent      = 206,
     MovedPermanently    = 301,
     Found               = 302,
     NotModified         = 304,
@@ -66,6 +67,7 @@ enum class StatusCode : unsigned {
     Conflict            = 409,
     UnprocessableEntity = 422,
     TooManyRequests     = 429,
+    RangeNotSatisfiable = 416,
     InternalServerError = 500,
     NotImplemented      = 501,
     BadGateway          = 502,
@@ -80,6 +82,7 @@ inline std::string_view status_message(StatusCode c) noexcept {
         case StatusCode::Created:             return "Created";
         case StatusCode::Accepted:            return "Accepted";
         case StatusCode::NoContent:           return "No Content";
+        case StatusCode::PartialContent:      return "Partial Content";
         case StatusCode::MovedPermanently:    return "Moved Permanently";
         case StatusCode::Found:               return "Found";
         case StatusCode::NotModified:         return "Not Modified";
@@ -91,6 +94,7 @@ inline std::string_view status_message(StatusCode c) noexcept {
         case StatusCode::Conflict:            return "Conflict";
         case StatusCode::UnprocessableEntity: return "Unprocessable Entity";
         case StatusCode::TooManyRequests:     return "Too Many Requests";
+        case StatusCode::RangeNotSatisfiable: return "Range Not Satisfiable";
         case StatusCode::InternalServerError: return "Internal Server Error";
         case StatusCode::NotImplemented:      return "Not Implemented";
         case StatusCode::BadGateway:          return "Bad Gateway";
