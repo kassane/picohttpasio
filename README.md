@@ -1,8 +1,9 @@
 # picohttpasio
 
 [![CI](https://github.com/kassane/picohttpasio/actions/workflows/ci.yml/badge.svg)](https://github.com/kassane/picohttpasio/actions/workflows/ci.yml)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/kassane/picohttpasio)
 
-A lightweight, user-friendly C++23 HTTP/1.1 SDK built on
+A lightweight, user-friendly C++23 HTTP/1.1 built on
 [standalone ASIO](https://github.com/chriskohlhoff/asio) and
 [picohttpparser](https://github.com/h2o/picohttpparser).
 
