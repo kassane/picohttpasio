@@ -28,24 +28,19 @@ include(FetchContent)
 # ---------------------------------------------------------------------------
 # ASIO — standalone header-only, fetched directly from upstream
 # ---------------------------------------------------------------------------
-FetchContent_Declare(asio
-    GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
-    GIT_TAG asio-1-38-0
-    GIT_SHALLOW TRUE)
-FetchContent_MakeAvailable(asio)
+set(ASIO_USE_CPM OFF)
+set(ASIO_CPM_FETCHCONTENT_COMPAT ON)
+set(ASIO_SEPARATE_COMPILATION OFF)
+set(ASIO_TAG asio-1-38-0)
+set(ASIO_NO_DEPRECATED ON)
 
-# ASIO ships no CMakeLists.txt — create the INTERFACE target ourselves.
-# We set INTERFACE_INCLUDE_DIRECTORIES explicitly so that it propagates
-# correctly on all CMake generators, including MSVC/MSBuild.
-if(NOT TARGET asio)
-    add_library(asio INTERFACE)
-    target_include_directories(asio SYSTEM INTERFACE
-        ${asio_SOURCE_DIR}/asio/include)
-    target_compile_definitions(asio INTERFACE
-        ASIO_STANDALONE
-        ASIO_NO_DEPRECATED)
-endif()
-
+FetchContent_Declare(
+    asiocmake
+    GIT_REPOSITORY https://github.com/OlivierLDff/asio.cmake
+    GIT_TAG main
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(asiocmake)
 # ---------------------------------------------------------------------------
 # Catch2 v3 (test framework — only when tests are enabled)
 # ---------------------------------------------------------------------------
@@ -126,6 +121,7 @@ add_library(picohttpasio INTERFACE)
 target_include_directories(picohttpasio INTERFACE
     include
     ${picohttpparser_SOURCE_DIR})
+add_library(picohttpparser::picohttpparser ALIAS picohttpparser)
 target_link_libraries(picohttpasio INTERFACE picohttpparser asio)
 
 if(PICO_ENABLE_TLS)
@@ -139,14 +135,12 @@ if(PICO_ENABLE_COMPRESSION AND ZLIB_FOUND)
 endif()
 
 if(WIN32)
-    # _WIN32_WINNT=0x0A00 — target Windows 10+ (suppresses ASIO's "assuming 0x0601" warning)
-    # WIN32_LEAN_AND_MEAN  — exclude rarely-used Windows API surface
-    # NOMINMAX             — prevent <windows.h> min/max macro conflicts with std::min/max
     target_compile_definitions(picohttpasio INTERFACE
         _WIN32_WINNT=0x0A00
         WIN32_LEAN_AND_MEAN
         NOMINMAX
     )
+    target_link_libraries(asio INTERFACE ws2_32)
 endif()
 
 # ---------------------------------------------------------------------------

@@ -109,6 +109,14 @@ private:
             catch (...) {}
         }
 
+        // Reject oversized payloads to prevent memory-exhaustion DoS
+        constexpr size_t max_body_size = 10 * 1024 * 1024; // 10 MB
+        if (content_len > max_body_size) {
+            read_buf_.clear();
+            sendRaw(Response::make(StatusCode::PayloadTooLarge).serialize(), false);
+            return;
+        }
+
         if (content_len > 0 && read_buf_.size() < content_len) {
             size_t remaining = content_len - read_buf_.size();
             auto self = this->shared_from_this();

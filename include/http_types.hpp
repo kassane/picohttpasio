@@ -66,8 +66,9 @@ enum class StatusCode : unsigned {
     MethodNotAllowed    = 405,
     Conflict            = 409,
     UnprocessableEntity = 422,
-    TooManyRequests     = 429,
+    PayloadTooLarge     = 413,
     RangeNotSatisfiable = 416,
+    TooManyRequests     = 429,
     InternalServerError = 500,
     NotImplemented      = 501,
     BadGateway          = 502,
@@ -93,8 +94,9 @@ inline std::string_view status_message(StatusCode c) noexcept {
         case StatusCode::MethodNotAllowed:    return "Method Not Allowed";
         case StatusCode::Conflict:            return "Conflict";
         case StatusCode::UnprocessableEntity: return "Unprocessable Entity";
-        case StatusCode::TooManyRequests:     return "Too Many Requests";
+        case StatusCode::PayloadTooLarge:     return "Payload Too Large";
         case StatusCode::RangeNotSatisfiable: return "Range Not Satisfiable";
+        case StatusCode::TooManyRequests:     return "Too Many Requests";
         case StatusCode::InternalServerError: return "Internal Server Error";
         case StatusCode::NotImplemented:      return "Not Implemented";
         case StatusCode::BadGateway:          return "Bad Gateway";
