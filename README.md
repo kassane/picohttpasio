@@ -7,7 +7,7 @@ A lightweight, user-friendly C++23 HTTP/1.1 built on
 [standalone ASIO](https://github.com/chriskohlhoff/asio) and
 [picohttpparser](https://github.com/h2o/picohttpparser).
 
-An accessible alternative to boost::beast — combining beast's async ASIO foundation
+An accessible alternative to `boost::beast` — combining beast's async ASIO foundation
 with an Express-style developer experience.
 
 ## Features
@@ -529,8 +529,6 @@ include/
   client.hpp            HTTPClient + HTTPSClient + RequestBuilder
   static_files.hpp      serve_static(), StaticConfig, ETag/Range/gzip helpers
   crypto.hpp            Crypto primitives via OpenSSL EVP (requires PICO_ENABLE_TLS)
-src/
-  (picohttpparser fetched automatically via FetchContent)
 tests/
   test_types.cpp        Method/StatusCode unit tests
   test_parser.cpp       Request/response parser tests
