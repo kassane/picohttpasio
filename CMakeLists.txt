@@ -8,7 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # ---------------------------------------------------------------------------
 # Options
 # ---------------------------------------------------------------------------
-option(PICO_ENABLE_TLS         "Enable HTTPS/TLS and crypto primitives via OpenSSL" ON)
+option(PICO_ENABLE_TLS "Enable HTTPS/TLS and crypto primitives via OpenSSL" ON)
 option(PICO_ENABLE_COMPRESSION "Enable gzip compression for static file serving (requires zlib)" ON)
 
 # When consumed via FetchContent/add_subdirectory, default tests and examples
@@ -26,21 +26,25 @@ option(PICO_BUILD_BENCHMARKS "Build the TechEmpower benchmark server" OFF)
 include(FetchContent)
 
 # ---------------------------------------------------------------------------
-# ASIO — now using OlivierLDff/asio.cmake
+# ASIO — standalone header-only, fetched directly from upstream
 # ---------------------------------------------------------------------------
-set(ASIO_USE_CPM OFF)
-set(ASIO_CPM_FETCHCONTENT_COMPAT ON)
-set(ASIO_SEPARATE_COMPILATION OFF)
-set(ASIO_TAG asio-1-38-0)
-set(ASIO_NO_DEPRECATED ON)
+FetchContent_Declare(asio
+    GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
+    GIT_TAG asio-1-38-0
+    GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(asio)
 
-FetchContent_Declare(
-    asiocmake
-    GIT_REPOSITORY https://github.com/OlivierLDff/asio.cmake
-    GIT_TAG main
-    GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(asiocmake)
+# ASIO ships no CMakeLists.txt — create the INTERFACE target ourselves.
+# We set INTERFACE_INCLUDE_DIRECTORIES explicitly so that it propagates
+# correctly on all CMake generators, including MSVC/MSBuild.
+if(NOT TARGET asio)
+    add_library(asio INTERFACE)
+    target_include_directories(asio SYSTEM INTERFACE
+        ${asio_SOURCE_DIR}/asio/include)
+    target_compile_definitions(asio INTERFACE
+        ASIO_STANDALONE
+        ASIO_NO_DEPRECATED)
+endif()
 
 # ---------------------------------------------------------------------------
 # Catch2 v3 (test framework — only when tests are enabled)
@@ -95,9 +99,9 @@ if(PICO_ENABLE_COMPRESSION)
         message(STATUS "Compression enabled (zlib ${ZLIB_VERSION_STRING})")
     else()
         message(STATUS "ZLIB not found — compression disabled. "
-                       "Install with: apt-get install zlib1g-dev  (Debian/Ubuntu)\n"
-                       "                               dnf install zlib-devel  (Fedora/RHEL)\n"
-                       "                               brew install zlib       (macOS)")
+            "Install with: apt-get install zlib1g-dev  (Debian/Ubuntu)\n"
+            "                               dnf install zlib-devel  (Fedora/RHEL)\n"
+            "                               brew install zlib       (macOS)")
         set(PICO_ENABLE_COMPRESSION OFF)
     endif()
 endif()
