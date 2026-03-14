@@ -1,22 +1,46 @@
 #pragma once
 
+// ---------------------------------------------------------------------------
+// server.hpp — callback-based HTTP (and HTTPS) server
+//
+// Plain HTTP:
+//   pico::HTTPServer server(io, 8080, "./www");
+//   server.router().get("/hello", handler);
+//   io.run();
+//
+// HTTPS (requires PICO_ENABLE_TLS):
+//   auto ctx = pico::ssl::make_server_context("cert.pem", "key.pem");
+//   pico::HTTPServer server(io, 8443, "./www");
+//   server.use_tls(std::move(ctx));
+//   io.run();
+//
+// TODO: HTTP/2 — would require nghttp2 for ALPN negotiation and multiplexed
+//   stream handling; a significant architectural addition. Consider a separate
+//   H2Server class to avoid breaking the HTTP/1.1 path.
+// TODO: HTTP/3 — would require ngtcp2 + QUIC transport support in ASIO.
+// ---------------------------------------------------------------------------
+
 #include "request.hpp"
 #include "response.hpp"
 #include "router.hpp"
+#include "static_files.hpp"
 #include "websocket.hpp"
 #include <asio.hpp>
-#include <fstream>
 #include <functional>
-#include <iostream>
 #include <memory>
 #include <string>
+
+#ifdef PICO_ENABLE_TLS
+#include "ssl_context.hpp"
+#include <asio/ssl.hpp>
+#endif
 
 using asio::ip::tcp;
 
 namespace pico {
 
 // ---------------------------------------------------------------------------
-// HTTPServerConnection  — per-connection state machine
+// HTTPServerConnection<Socket>  — per-connection state machine
 //
 // Lifecycle:
 //   start()
@@ -26,27 +50,38 @@ namespace pico {
 //                       ├─ if keep-alive → readRequest()  (loop)
 //                       └─ if Connection: Upgrade (WS) → upgrade()
 // ---------------------------------------------------------------------------
+template<typename Socket>
 class HTTPServerConnection
-    : public std::enable_shared_from_this<HTTPServerConnection> {
+    : public std::enable_shared_from_this<HTTPServerConnection<Socket>> {
 public:
-    HTTPServerConnection(tcp::socket socket,
+    HTTPServerConnection(Socket socket,
                          const Router& router,
                          const std::string& root_dir,
-                         unsigned max_keepalive = 100)
+                         unsigned max_keepalive,
+                         const StaticConfig& static_cfg)
         : socket_(std::move(socket))
         , router_(router)
         , root_dir_(root_dir)
-        , max_keepalive_(max_keepalive) {}
+        , max_keepalive_(max_keepalive)
+        , static_cfg_(static_cfg) {}
 
     void start() { readRequest(); }
 
 private:
+    void do_shutdown() {
+        std::error_code ec;
+        if constexpr (std::is_same_v<Socket, tcp::socket>)
+            socket_.shutdown(tcp::socket::shutdown_both, ec);
+        else
+            socket_.lowest_layer().shutdown(tcp::socket::shutdown_both, ec);
+    }
+
     void readRequest() {
         if (requests_served_ >= max_keepalive_) {
-            std::error_code ignored; socket_.shutdown(tcp::socket::shutdown_both, ignored);
+            do_shutdown();
             return;
         }
-        auto self = shared_from_this();
+        auto self = this->shared_from_this();
         asio::async_read_until(
             socket_, asio::dynamic_buffer(read_buf_), "\r\n\r\n",
             [this, self](std::error_code ec, size_t header_bytes) {
@@ -58,7 +93,6 @@ private:
     void handleRequest(size_t header_bytes) {
         std::string header_str = read_buf_.substr(0, header_bytes);
 
-        // Tentatively parse headers to find Content-Length / body
         HTTPRequest parser(header_str);
         if (!parser.parse()) {
             read_buf_.clear();
@@ -66,7 +100,6 @@ private:
             return;
         }
 
-        // Consume header bytes from buffer; remainder may be start of body
         read_buf_.erase(0, header_bytes);
 
         size_t content_len = 0;
@@ -78,7 +111,7 @@ private:
 
         if (content_len > 0 && read_buf_.size() < content_len) {
             size_t remaining = content_len - read_buf_.size();
-            auto self = shared_from_this();
+            auto self = this->shared_from_this();
             asio::async_read(
                 socket_, asio::dynamic_buffer(read_buf_),
                 asio::transfer_exactly(remaining),
@@ -115,13 +148,12 @@ private:
         if (!router_.dispatch(req, res)) {
             // No route matched — try static file serving, else 404
             if (req.method == Method::GET) {
-                res = serveStatic(req.path);
+                res = serve_static(req, root_dir_, static_cfg_);
             } else {
                 res = Response::not_found();
             }
         }
 
-        // Inject Connection header to match keep-alive decision
         res.header("Connection", keep ? "keep-alive" : "close");
         ++requests_served_;
         sendRaw(res.serialize(), keep);
@@ -136,80 +168,49 @@ private:
         auto accept = ws::ws_accept_key(key);
         auto upgrade_response = Response::switching_protocols(accept);
         auto wire = std::make_shared<std::string>(upgrade_response.serialize());
-        auto self = shared_from_this();
+        auto self = this->shared_from_this();
         asio::async_write(socket_, asio::buffer(*wire),
             [this, self, wire](std::error_code ec, size_t) {
                 if (ec) return;
-                // Hand off socket to WebSocketConnection
-                auto ws_conn = std::make_shared<ws::WebSocketConnection>(std::move(socket_));
-                if (ws_handler_) ws_handler_(ws_conn);
-                ws_conn->start();
+                // Hand off socket to WebSocketConnection.
+                // For TLS streams, extract the underlying tcp::socket.
+                if constexpr (std::is_same_v<Socket, tcp::socket>) {
+                    auto ws_conn = std::make_shared<ws::WebSocketConnection>(std::move(socket_));
+                    if (ws_handler_) ws_handler_(ws_conn);
+                    ws_conn->start();
+                } else {
+                    auto ws_conn = std::make_shared<ws::WebSocketConnection>(
+                        std::move(socket_.next_layer()));
+                    if (ws_handler_) ws_handler_(ws_conn);
+                    ws_conn->start();
+                }
             });
     }
 
     void sendRaw(std::string data, bool keep_alive) {
         auto wire = std::make_shared<std::string>(std::move(data));
-        auto self = shared_from_this();
+        auto self = this->shared_from_this();
         asio::async_write(socket_, asio::buffer(*wire),
             [this, self, wire, keep_alive](std::error_code ec, size_t) {
                 if (!ec && keep_alive) {
                     readRequest();
                 } else if (!ec) {
-                    std::error_code ignored;
-                    socket_.shutdown(tcp::socket::shutdown_both, ignored);
+                    do_shutdown();
                 }
             });
     }
 
-    Response serveStatic(const std::string& path) {
-        // Prevent directory traversal
-        if (path.find("..") != std::string::npos)
-            return Response::bad_request("Invalid path");
-
-        std::string file_path = root_dir_;
-        if (path == "/") {
-            file_path += "/index.html";
-        } else {
-            file_path += path;
-        }
-
-        std::ifstream file(file_path, std::ios::binary);
-        if (!file) return Response::not_found();
-
-        std::string contents((std::istreambuf_iterator<char>(file)),
-                              std::istreambuf_iterator<char>());
-
-        // Guess Content-Type from extension
-        std::string_view ct = "application/octet-stream";
-        if (file_path.ends_with(".html") || file_path.ends_with(".htm"))
-            ct = "text/html; charset=utf-8";
-        else if (file_path.ends_with(".css"))
-            ct = "text/css";
-        else if (file_path.ends_with(".js"))
-            ct = "application/javascript";
-        else if (file_path.ends_with(".json"))
-            ct = "application/json";
-        else if (file_path.ends_with(".png"))
-            ct = "image/png";
-        else if (file_path.ends_with(".jpg") || file_path.ends_with(".jpeg"))
-            ct = "image/jpeg";
-        else if (file_path.ends_with(".svg"))
-            ct = "image/svg+xml";
-        else if (file_path.ends_with(".txt"))
-            ct = "text/plain; charset=utf-8";
-
-        return Response::make().body(std::move(contents), ct);
-    }
-
-    tcp::socket   socket_;
+    Socket        socket_;
     const Router& router_;
     std::string   root_dir_;
     std::string   read_buf_;
     unsigned      max_keepalive_;
     unsigned      requests_served_ = 0;
+    StaticConfig  static_cfg_;
 
-    // Optional WS upgrade handler — set by HTTPServer
     std::function<void(std::shared_ptr<ws::WebSocketConnection>)> ws_handler_;
+
+    template<typename S> friend class HTTPServerImpl;
     friend class HTTPServer;
 };
 
@@ -225,27 +226,62 @@ public:
         startAccept();
     }
 
-    // Access the router to register routes + middleware before running.
+    /// Access the router to register routes + middleware before running.
     Router& router() { return router_; }
 
-    // Register a WebSocket upgrade handler.
-    // Called when a client successfully upgrades; receives the live WsConnection.
+    /// Access/modify the static file serving configuration.
+    StaticConfig& static_config() { return static_cfg_; }
+
+    /// Register a WebSocket upgrade handler.
     HTTPServer& on_websocket(
             std::function<void(std::shared_ptr<ws::WebSocketConnection>)> h) {
         ws_handler_ = std::move(h);
         return *this;
     }
 
-    // Set maximum requests per keep-alive connection (default 100).
+    /// Set maximum requests per keep-alive connection (default 100).
     HTTPServer& max_keepalive(unsigned n) { max_keepalive_ = n; return *this; }
+
+#ifdef PICO_ENABLE_TLS
+    /// Enable TLS — call before io.run().
+    /// Takes a fully configured asio::ssl::context (use ssl_context.hpp helpers).
+    HTTPServer& use_tls(asio::ssl::context ctx) {
+        ssl_ctx_ = std::make_shared<asio::ssl::context>(std::move(ctx));
+        return *this;
+    }
+
+    bool tls_enabled() const { return ssl_ctx_ != nullptr; }
+#endif
 
 private:
     void startAccept() {
         acceptor_.async_accept(
             [this](std::error_code ec, tcp::socket socket) {
                 if (!ec) {
-                    auto conn = std::make_shared<HTTPServerConnection>(
-                        std::move(socket), router_, root_dir_, max_keepalive_);
+#ifdef PICO_ENABLE_TLS
+                    if (ssl_ctx_) {
+                        // Wrap in SSL stream and perform handshake before session
+                        auto ssl_sock = std::make_shared<asio::ssl::stream<tcp::socket>>(
+                            std::move(socket), *ssl_ctx_);
+                        ssl_sock->async_handshake(
+                            asio::ssl::stream_base::server,
+                            [this, ssl_sock](std::error_code hec) {
+                                if (!hec) {
+                                    auto conn = std::make_shared<
+                                        HTTPServerConnection<asio::ssl::stream<tcp::socket>>>(
+                                        std::move(*ssl_sock), router_, root_dir_,
+                                        max_keepalive_, static_cfg_);
+                                    conn->ws_handler_ = ws_handler_;
+                                    conn->start();
+                                }
+                                startAccept();
+                            });
+                        return; // startAccept() called inside handshake callback
+                    }
+#endif
+                    auto conn = std::make_shared<HTTPServerConnection<tcp::socket>>(
+                        std::move(socket), router_, root_dir_,
+                        max_keepalive_, static_cfg_);
                     conn->ws_handler_ = ws_handler_;
                     conn->start();
                 }
@@ -253,11 +289,17 @@ private:
             });
     }
 
-    tcp::acceptor  acceptor_;
-    Router         router_;
-    std::string    root_dir_;
-    unsigned       max_keepalive_ = 100;
+    tcp::acceptor acceptor_;
+    Router        router_;
+    std::string   root_dir_;
+    unsigned      max_keepalive_ = 100;
+    StaticConfig  static_cfg_;
+
     std::function<void(std::shared_ptr<ws::WebSocketConnection>)> ws_handler_;
+
+#ifdef PICO_ENABLE_TLS
+    std::shared_ptr<asio::ssl::context> ssl_ctx_;
+#endif
 };
 
 } // namespace pico

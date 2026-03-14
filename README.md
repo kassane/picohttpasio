@@ -16,13 +16,19 @@ with an Express-style developer experience.
 - **Middleware chain** — global or prefix-scoped; short-circuit or pass-through
 - **Fluent Response builder** — status, headers, body, JSON, HTML, redirect
 - **Keep-alive / HTTP pipelining** — reuse connections for multiple requests
-- **WebSocket** — handled automatically; RFC-compliant
-  handshake (inline SHA-1) with full frame codec
-- **HTTPS/TLS** — optional; wraps ASIO SSL with OpenSSL (enabled by `-DPICO_ENABLE_TLS=ON`)
+- **WebSocket** — full client and server support; RFC-compliant handshake (SHA-1)
+  with masked client frames and complete frame codec
+- **HTTPS/TLS** — optional; wraps ASIO SSL with OpenSSL for both `HTTPServer` and
+  `CoroServer` (enabled by `-DPICO_ENABLE_TLS=ON`)
 - **Crypto primitives** — SHA-256/512, BLAKE2b, Ed25519 signatures, AES-256-GCM AEAD,
   X25519 key exchange; all via OpenSSL EVP (no extra dependency beyond TLS)
-- **Static file serving** — content-type detection, directory-traversal protection
-- **Async client** — `RequestBuilder` + keep-alive connection reuse
+- **Static file serving** — 30+ MIME types, directory-traversal protection,
+  ETag/Last-Modified caching (HTTP 304), Range requests (HTTP 206/416),
+  optional gzip compression, optional directory listing, configurable extra MIME types
+- **Async HTTP client** — plain (`HTTPClient`) and TLS (`HTTPSClient`), `RequestBuilder`,
+  keep-alive connection reuse
+- **Async WebSocket client** — `WebSocketClient` with proper RFC 6455 masked frames,
+  handshake validation, ping/pong handling
 - **Cross-platform** — Linux, macOS, Windows (MSVC 19.35+ / GCC 13+ / Clang 16+)
 - **Catch2 v3 test suite** — unit tests + localhost integration tests
 
@@ -33,6 +39,7 @@ with an Express-style developer experience.
 | Compiler | C++23 (GCC 13+, Clang 16+, MSVC 19.35+) | |
 | Build | CMake 3.14+ | |
 | TLS / Crypto | — | OpenSSL 1.1.1+ (`libssl-dev` on Ubuntu, `brew install openssl` on macOS) |
+| Compression | — | zlib (`zlib1g-dev` on Ubuntu, bundled on macOS/Windows) |
 | Network | First build fetches ASIO + Catch2 via FetchContent | |
 
 ## Using picohttpasio in your project (FetchContent)
@@ -60,6 +67,12 @@ FetchContent_Declare(picohttpasio ...)
 FetchContent_MakeAvailable(picohttpasio)
 ```
 
+Enable gzip compression for static files (requires zlib):
+
+```cmake
+set(PICO_ENABLE_COMPRESSION ON CACHE BOOL "" FORCE)
+```
+
 ## Building (tests & examples)
 
 ```sh
@@ -73,6 +86,10 @@ ctest --test-dir build --output-on-failure
 
 # Without TLS/crypto
 cmake -B build -DPICO_ENABLE_TLS=OFF
+cmake --build build --parallel
+
+# With gzip compression (requires zlib)
+cmake -B build -DPICO_ENABLE_COMPRESSION=ON
 cmake --build build --parallel
 ```
 
@@ -101,13 +118,13 @@ cmake --build build --parallel
 
 ## Continuous Integration
 
-CI runs on every push via GitHub Actions across a full platform × TLS matrix:
+CI runs on every push via GitHub Actions across a full platform × TLS × compression matrix:
 
-| Platform | TLS ON | TLS OFF |
-|---|---|---|
-| Ubuntu (GCC) | ✓ | ✓ |
-| macOS (Clang) | ✓ | ✓ |
-| Windows (MSVC) | ✓ | ✓ |
+| Platform | TLS ON, Compression ON | TLS ON, Compression OFF | TLS OFF |
+|---|---|---|---|
+| Ubuntu (GCC) | ✓ | ✓ | ✓ |
+| macOS (Clang) | ✓ | ✓ | ✓ |
+| Windows (MSVC) | ✓ | ✓ | ✓ |
 
 A separate benchmark workflow runs [TechEmpower](https://www.techempower.com/benchmarks/)-style
 endpoints (Plaintext cat. 6 + JSON cat. 1) with `wrk` on each push to main.
@@ -151,24 +168,133 @@ int main() {
 
 ## Quick Start — HTTPS Server
 
+### Callback-based (`HTTPServer` + `use_tls`)
+
+```cpp
+#include <server.hpp>   // requires PICO_ENABLE_TLS
+
+int main() {
+    asio::io_context io;
+    asio::ssl::context ssl(asio::ssl::context::tls_server);
+    ssl.use_certificate_chain_file("cert.pem");
+    ssl.use_private_key_file("key.pem", asio::ssl::context::pem);
+
+    pico::HTTPServer server(io, 8443, "./www");
+    server.use_tls(std::move(ssl));   // enable TLS on this server
+
+    server.router().get("/", [](pico::Request&, pico::Response& res) {
+        res = pico::Response::ok("Hello over TLS!\n");
+    });
+
+    io.run();
+}
+```
+
+### Coroutine-based (`CoroServer`)
+
 ```cpp
 #include <coro_server.hpp>   // requires PICO_ENABLE_TLS
 
 int main() {
     asio::io_context io;
-    asio::ssl::context ssl(asio::ssl::context::tls);
+    asio::ssl::context ssl(asio::ssl::context::tls_server);
     ssl.use_certificate_chain_file("cert.pem");
     ssl.use_private_key_file("key.pem", asio::ssl::context::pem);
 
-    pico::CoroServer server(io, ssl, 8443);
-    server.router()
-        .get("/", [](pico::Request&, pico::Response& res) {
-            res = pico::Response::ok("Hello over TLS!\n");
-        });
+    pico::CoroServer server(io, 8443, "./www");
+    server.use_tls(std::move(ssl));
+
+    server.router().get("/", [](pico::Request&, pico::Response& res) {
+        res = pico::Response::ok("Hello over TLS!\n");
+    });
 
     io.run();
 }
 ```
+
+## Quick Start — Static File Configuration
+
+Both `HTTPServer` and `CoroServer` expose `static_config()` to tune static file serving:
+
+```cpp
+#include <server.hpp>
+
+int main() {
+    asio::io_context io;
+    pico::HTTPServer server(io, 8080, "./www");
+
+    auto& cfg = server.static_config();
+    cfg.caching          = true;    // ETag + Last-Modified / 304 Not Modified
+    cfg.range_requests   = true;    // HTTP 206 Partial Content / 416 Range Not Satisfiable
+    cfg.directory_listing = true;   // auto-generated HTML index for directories
+#ifdef PICO_ENABLE_COMPRESSION
+    cfg.compression      = true;    // gzip (requires -DPICO_ENABLE_COMPRESSION=ON)
+#endif
+    // Register extra MIME types (merged with the 30+ built-in ones)
+    cfg.extra_mime_types[".ts"]   = "application/typescript";
+    cfg.extra_mime_types[".wasm"] = "application/wasm";
+
+    io.run();
+}
+```
+
+## Quick Start — HTTPS Client
+
+```cpp
+#include <client.hpp>
+#include <ssl_context.hpp>   // requires PICO_ENABLE_TLS
+
+int main() {
+    asio::io_context io;
+
+    // make_client_context(true)  → verify peer certificate
+    // make_client_context(false) → skip verification (self-signed / dev)
+    auto ctx = pico::ssl::make_client_context(true);
+
+    pico::HTTPSClient client(io, "example.com", 443, ctx);
+    client.get("/api/data", [](std::optional<HTTPResponse> resp) {
+        if (!resp) { std::cerr << "request failed\n"; return; }
+        std::cout << resp->statusCode() << " " << resp->statusMessage() << "\n";
+        for (const auto& [k, v] : resp->headers())
+            std::cout << "  " << k << ": " << v << "\n";
+    });
+
+    io.run();
+}
+```
+
+## Quick Start — WebSocket Client
+
+```cpp
+#include <websocket.hpp>
+#include <asio.hpp>
+// See examples/websocket_client.cpp for the full WebSocketClient class
+
+int main() {
+    asio::io_context io;
+    auto client = std::make_shared<WebSocketClient>(io, "localhost", 8080);
+
+    client->on_open([&client]() {
+        client->send("Hello, server!");
+    });
+
+    client->on_message([](pico::ws::Frame frame) {
+        std::cout << "Echo: " << frame.payload << "\n";
+    });
+
+    client->on_close([]() { std::cout << "closed\n"; });
+
+    client->connect("/ws");
+    io.run();
+}
+```
+
+Key points:
+- `WebSocketClient` handles the HTTP upgrade handshake, validates
+  `Sec-WebSocket-Accept` (RFC 6455 §4.1)
+- All frames sent by the client are properly **masked** (RFC 6455 §5.3 requirement)
+- Supports ping/pong, opcode dispatch, and a graceful close handshake
+- Works with the bundled `websocket_echo` server and any RFC-compliant server
 
 ## Quick Start — Crypto
 
@@ -305,19 +431,79 @@ pico::RequestBuilder{}
     .build()  // → wire-format string
 ```
 
+### `pico::StaticConfig`
+
+Controls static file serving behaviour for `HTTPServer` and `CoroServer`:
+
+```cpp
+struct StaticConfig {
+    bool caching          = true;   // ETag + Last-Modified / 304 Not Modified
+    bool range_requests   = true;   // HTTP 206 Partial Content, 416 Range Not Satisfiable
+    bool directory_listing = false; // auto HTML index for directories (off by default)
+    bool compression      = false;  // gzip (requires PICO_ENABLE_COMPRESSION)
+    // Extra MIME types merged with 30+ built-ins (.html .css .js .json .png .jpg …)
+    std::unordered_map<std::string, std::string> extra_mime_types;
+};
+
+// Access via:
+server.static_config().compression = true;
+server.static_config().extra_mime_types[".ts"] = "application/typescript";
+```
+
+### `HTTPServer` / `CoroServer`
+
+```cpp
+// Shared API
+server.router()                      // → Router& for registering routes/middleware
+server.on_websocket(handler)         // register WebSocket upgrade handler
+server.static_config()               // → StaticConfig& for static file options
+
+// TLS (requires PICO_ENABLE_TLS)
+server.use_tls(asio::ssl::context)   // enable TLS; call before io.run()
+```
+
+### `pico::HTTPClient` / `pico::HTTPSClient`
+
+```cpp
+// Plain HTTP
+pico::HTTPClient client(io, "example.com", 80);
+client.get("/path", callback);
+client.request(wire_string, callback);
+
+// HTTPS (requires PICO_ENABLE_TLS)
+auto ctx = pico::ssl::make_client_context(/*verify_peer=*/true);
+pico::HTTPSClient client(io, "example.com", 443, ctx);
+client.get("/path", callback);
+client.request(wire_string, callback);
+
+// Callback signature:
+//   void(std::optional<HTTPResponse>)
+//   HTTPResponse is in the global namespace (picohttpparser wrapper)
+```
+
 ### WebSocket (`pico::ws`)
 
 ```cpp
-pico::ws::ws_accept_key(client_key)   // handshake key
-pico::ws::encode(frame)               // frame → bytes
+// Server-side helpers
+pico::ws::ws_accept_key(client_key)   // compute Sec-WebSocket-Accept
+pico::ws::encode(frame)               // server→client frame (unmasked)
 pico::ws::decode(buffer, frame_out)   // bytes → frame (0 = incomplete)
 
-// WebSocketConnection
+// WebSocketConnection (server-side, created automatically on upgrade)
 conn->send("hello")
 conn->send(data, pico::ws::Opcode::Binary)
 conn->close()
 conn->on_message([](pico::ws::Frame f) { … })
 conn->on_close([]() { … })
+
+// WebSocketClient (see examples/websocket_client.cpp)
+// Client frames are RFC 6455 §5.3 masked automatically.
+client->on_open([]() { … })
+client->on_message([](pico::ws::Frame f) { … })
+client->on_close([]() { … })
+client->connect("/ws")
+client->send("text")
+client->close()
 ```
 
 ### Built-in middleware
@@ -337,9 +523,10 @@ include/
   response.hpp          Response fluent builder + serializer
   router.hpp            Router, path matching, middleware chain
   websocket.hpp         WS handshake (SHA-1), frame codec, WebSocketConnection
-  server.hpp            HTTPServer (keep-alive, WS dispatch, static files)
-  coro_server.hpp       Coroutine-based HTTPS server (requires PICO_ENABLE_TLS)
-  client.hpp            HTTPClient + RequestBuilder
+  server.hpp            HTTPServer (keep-alive, WS dispatch, TLS, static files)
+  coro_server.hpp       Coroutine-based HTTPS/HTTP server (TLS optional)
+  client.hpp            HTTPClient + HTTPSClient + RequestBuilder
+  static_files.hpp      serve_static(), StaticConfig, ETag/Range/gzip helpers
   crypto.hpp            Crypto primitives via OpenSSL EVP (requires PICO_ENABLE_TLS)
 src/
   (picohttpparser fetched automatically via FetchContent)
@@ -352,33 +539,42 @@ tests/
   test_integration.cpp  Real localhost server+client round-trip tests
   test_crypto.cpp       Crypto primitives tests (requires PICO_ENABLE_TLS)
   test_coro.cpp         TLS coroutine server tests (requires PICO_ENABLE_TLS)
+  test_static_files.cpp Static file serving: ETag, Range, 304, 206, MIME, gzip
 examples/
   simple_server.cpp     Basic server with routes and middleware
   rest_api.cpp          CRUD REST API demo
   websocket_echo.cpp    WebSocket echo server
+  websocket_client.cpp  WebSocket client (masked frames, handshake validation)
   coro_server.cpp       Coroutine HTTPS server demo
   https_server.cpp      Full HTTPS + WebSocket + crypto demo
+  https_client.cpp      Async HTTPS client demo (requires PICO_ENABLE_TLS)
   techempower_bench.cpp TechEmpower benchmark server (cat. 1 JSON + cat. 6 Plaintext)
 .github/workflows/
-  ci.yml                Build + test matrix: Linux / macOS / Windows × TLS ON/OFF
+  ci.yml                Build + test matrix: Linux / macOS / Windows × TLS × compression
   bench.yml             TechEmpower-style wrk benchmark (Linux, informational)
 ```
 
 ## Comparison with boost::beast
 
-| Feature                        | boost::beast     | picohttpasio       |
-|-------------------------------|------------------|--------------------|
-| Routing                       | Manual           | Built-in router    |
-| Middleware                    | None             | Chain system       |
-| Response builder              | Manual           | Fluent API         |
-| WebSocket                     | Yes (low-level)  | Yes (high-level)   |
-| HTTPS/TLS                     | Yes              | Yes (OpenSSL)      |
-| Crypto primitives             | No               | Yes (OpenSSL EVP)  |
-| Keep-alive                    | Manual           | Automatic          |
-| Windows support               | Yes              | Yes                |
-| Boost dependency              | Required         | None               |
-| C++ standard                  | C++11+           | C++23              |
-| Learning curve                | Steep            | Express-like       |
+| Feature                        | boost::beast     | picohttpasio          |
+|-------------------------------|------------------|-----------------------|
+| Routing                       | Manual           | Built-in router       |
+| Middleware                    | None             | Chain system          |
+| Response builder              | Manual           | Fluent API            |
+| WebSocket server              | Yes (low-level)  | Yes (high-level)      |
+| WebSocket client              | Yes (low-level)  | Yes (high-level)      |
+| HTTPS/TLS server              | Yes              | Yes (OpenSSL)         |
+| HTTPS/TLS client              | Yes              | Yes (OpenSSL)         |
+| Crypto primitives             | No               | Yes (OpenSSL EVP)     |
+| Static files — MIME types     | Manual           | 30+ built-in          |
+| Static files — ETag/304       | Manual           | Automatic             |
+| Static files — Range/206      | Manual           | Automatic             |
+| Static files — gzip           | Manual           | Optional (zlib)       |
+| Keep-alive                    | Manual           | Automatic             |
+| Windows support               | Yes              | Yes                   |
+| Boost dependency              | Required         | None                  |
+| C++ standard                  | C++11+           | C++23                 |
+| Learning curve                | Steep            | Express-like          |
 
 ## License
 

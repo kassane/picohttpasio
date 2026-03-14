@@ -6,6 +6,7 @@
 //   cmake --build build && ./build/examples/coro_server
 //   curl http://localhost:8080/hello
 //   curl -X POST http://localhost:8080/echo -d 'hi there'
+//   curl -r 0-49 http://localhost:8080/     → range request
 
 #include <coro_server.hpp>
 #include <iostream>
@@ -14,6 +15,14 @@ int main() {
     try {
         asio::io_context io;
         pico::CoroServer server(io, 8080, "./www");
+
+        // Configure static file serving
+        server.static_config().caching           = true;
+        server.static_config().range_requests    = true;
+        server.static_config().directory_listing = true;
+#ifdef PICO_ENABLE_COMPRESSION
+        server.static_config().compression       = true;
+#endif
 
         server.router()
             .use(pico::logging_middleware())
@@ -34,6 +43,7 @@ int main() {
         server.run();  // spawns accept coroutine
 
         std::cout << "CoroServer running on http://localhost:8080\n"
+                  << "  GET  /          → ./www/ (static, caching+ranges ON)\n"
                   << "  GET  /hello\n"
                   << "  GET  /users/:id\n"
                   << "  POST /echo\n"

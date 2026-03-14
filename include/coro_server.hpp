@@ -1,7 +1,7 @@
 #pragma once
 
 // ---------------------------------------------------------------------------
-// CoroServer — C++20 stackless-coroutine HTTP (and HTTPS) server
+// coro_server.hpp — C++20 stackless-coroutine HTTP (and HTTPS) server
 //
 // Uses asio::awaitable<T> / co_await / asio::co_spawn for clean,
 // readable async code — no callbacks, no shared_ptr connection state.
@@ -16,12 +16,21 @@
 //   auto ctx = pico::ssl::make_server_context("cert.pem", "key.pem");
 //   server.use_tls(std::move(ctx));
 //   server.run(); io.run();
+//
+// TODO: HTTP/2 — would require nghttp2 (https://nghttp2.org/) for ALPN
+//   negotiation and multiplexed stream handling. Significant architectural
+//   change required. Consider a separate H2Server class to avoid breaking
+//   the HTTP/1.1 path.
+// TODO: HTTP/3 — would require ngtcp2 (https://nghttp2.org/ngtcp2/) and
+//   QUIC transport support. Not feasible without a dedicated QUIC socket
+//   abstraction in ASIO.
 // ---------------------------------------------------------------------------
 
 #include "picohttpwrapper.hpp"
 #include "request.hpp"
 #include "response.hpp"
 #include "router.hpp"
+#include "static_files.hpp"
 #include "websocket.hpp"
 
 #include <asio.hpp>
@@ -35,7 +44,6 @@
 #include <memory>
 #endif
 
-#include <fstream>
 #include <functional>
 #include <string>
 #include <string_view>
@@ -46,39 +54,13 @@ namespace pico {
 
 namespace detail {
 
-// Static file helper (shared with server.hpp logic)
-inline Response serve_static_file(const std::string& path,
-                                   const std::string& root_dir) {
-    if (path.find("..") != std::string::npos)
-        return Response::bad_request("Invalid path");
-
-    std::string fpath = root_dir + (path == "/" ? "/index.html" : path);
-
-    std::ifstream file(fpath, std::ios::binary);
-    if (!file) return Response::not_found();
-
-    std::string contents((std::istreambuf_iterator<char>(file)),
-                          std::istreambuf_iterator<char>());
-
-    std::string_view ct = "application/octet-stream";
-    if      (fpath.ends_with(".html") || fpath.ends_with(".htm")) ct = "text/html; charset=utf-8";
-    else if (fpath.ends_with(".css"))  ct = "text/css";
-    else if (fpath.ends_with(".js"))   ct = "application/javascript";
-    else if (fpath.ends_with(".json")) ct = "application/json";
-    else if (fpath.ends_with(".png"))  ct = "image/png";
-    else if (fpath.ends_with(".jpg") || fpath.ends_with(".jpeg")) ct = "image/jpeg";
-    else if (fpath.ends_with(".svg"))  ct = "image/svg+xml";
-    else if (fpath.ends_with(".txt"))  ct = "text/plain; charset=utf-8";
-
-    return Response::make().body(std::move(contents), ct);
-}
-
 // Generic session coroutine — works with tcp::socket and ssl::stream<tcp::socket>
 template<typename Socket>
 asio::awaitable<void> run_session(Socket socket,
                                    const Router& router,
                                    const std::string& root_dir,
                                    unsigned max_keepalive,
+                                   const StaticConfig& static_cfg,
                                    std::function<void(std::shared_ptr<ws::WebSocketConnection>)> ws_handler)
 {
     std::string buf;
@@ -159,7 +141,7 @@ asio::awaitable<void> run_session(Socket socket,
             } catch (...) { co_return; }
 
             // Hand off to WebSocketConnection (takes ownership of the raw TCP socket).
-            // For SSL streams we extract the underlying tcp::socket via lowest_layer().
+            // For SSL streams we extract the underlying tcp::socket via next_layer().
             // Note: after upgrade the SSL state is effectively abandoned — WS frames
             // run over the raw TCP layer.  For true WSS you would wrap WS over the
             // ssl::stream as well, but this covers the common plain-HTTP case.
@@ -184,7 +166,7 @@ asio::awaitable<void> run_session(Socket socket,
         Response res = Response::make();
         if (!router.dispatch(req, res)) {
             if (req.method == Method::GET)
-                res = detail::serve_static_file(req.path, root_dir);
+                res = pico::serve_static(req, root_dir, static_cfg);
             else
                 res = Response::not_found();
         }
@@ -223,6 +205,9 @@ public:
         , root_dir_(std::move(root_dir)) {}
 
     Router& router() { return router_; }
+
+    /// Access/modify the static file serving configuration.
+    StaticConfig& static_config() { return static_cfg_; }
 
 #ifdef PICO_ENABLE_TLS
     // Enable TLS — call before run().
@@ -263,6 +248,7 @@ private:
                         [sock = std::move(socket), ctx_ptr,
                          &router = router_, &root = root_dir_,
                          max_ka = max_keepalive_,
+                         static_cfg = static_cfg_,
                          ws_h = ws_handler_]() mutable -> asio::awaitable<void>
                         {
                             asio::ssl::stream<tcp::socket> ssl_sock(std::move(sock), *ctx_ptr);
@@ -271,7 +257,8 @@ private:
                                     asio::ssl::stream_base::server, asio::use_awaitable);
                             } catch (...) { co_return; }
                             co_await detail::run_session(
-                                std::move(ssl_sock), router, root, max_ka, ws_h);
+                                std::move(ssl_sock), router, root,
+                                max_ka, static_cfg, ws_h);
                         },
                         asio::detached);
                     continue;
@@ -280,7 +267,7 @@ private:
                 asio::co_spawn(exec,
                     detail::run_session(
                         std::move(socket), router_, root_dir_,
-                        max_keepalive_, ws_handler_),
+                        max_keepalive_, static_cfg_, ws_handler_),
                     asio::detached);
 
             } catch (...) {
@@ -295,6 +282,7 @@ private:
     Router            router_;
     std::string       root_dir_;
     unsigned          max_keepalive_ = 100;
+    StaticConfig      static_cfg_;
 
     std::function<void(std::shared_ptr<ws::WebSocketConnection>)> ws_handler_;
 

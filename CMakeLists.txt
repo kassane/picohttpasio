@@ -8,7 +8,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # ---------------------------------------------------------------------------
 # Options
 # ---------------------------------------------------------------------------
-option(PICO_ENABLE_TLS "Enable HTTPS/TLS and crypto primitives via OpenSSL" ON)
+option(PICO_ENABLE_TLS         "Enable HTTPS/TLS and crypto primitives via OpenSSL" ON)
+option(PICO_ENABLE_COMPRESSION "Enable gzip compression for static file serving (requires zlib)" ON)
 
 # When consumed via FetchContent/add_subdirectory, default tests and examples
 # to OFF so they don't pollute the consumer's build.
@@ -86,6 +87,22 @@ if(PICO_ENABLE_TLS)
 endif()
 
 # ---------------------------------------------------------------------------
+# zlib — optional gzip compression for static file serving
+# ---------------------------------------------------------------------------
+if(PICO_ENABLE_COMPRESSION)
+    find_package(ZLIB QUIET)
+    if(ZLIB_FOUND)
+        message(STATUS "Compression enabled (zlib ${ZLIB_VERSION_STRING})")
+    else()
+        message(STATUS "ZLIB not found — compression disabled. "
+                       "Install with: apt-get install zlib1g-dev  (Debian/Ubuntu)\n"
+                       "                               dnf install zlib-devel  (Fedora/RHEL)\n"
+                       "                               brew install zlib       (macOS)")
+        set(PICO_ENABLE_COMPRESSION OFF)
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
 # picohttpparser (C library, fetched from upstream)
 # ---------------------------------------------------------------------------
 FetchContent_Declare(picohttpparser
@@ -110,6 +127,11 @@ target_link_libraries(picohttpasio INTERFACE picohttpparser asio)
 if(PICO_ENABLE_TLS)
     target_link_libraries(picohttpasio INTERFACE OpenSSL::SSL OpenSSL::Crypto)
     target_compile_definitions(picohttpasio INTERFACE PICO_ENABLE_TLS)
+endif()
+
+if(PICO_ENABLE_COMPRESSION AND ZLIB_FOUND)
+    target_link_libraries(picohttpasio INTERFACE ZLIB::ZLIB)
+    target_compile_definitions(picohttpasio INTERFACE PICO_ENABLE_COMPRESSION)
 endif()
 
 if(WIN32)
@@ -146,6 +168,7 @@ if(PICO_BUILD_TESTS)
     pico_test(test_websocket)
     pico_test(test_integration)
     pico_test(test_coro)
+    pico_test(test_static_files)
 
     if(PICO_ENABLE_TLS)
         pico_test(test_crypto)
