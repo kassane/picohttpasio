@@ -117,19 +117,6 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
 
-## Continuous Integration
-
-CI runs on every push via GitHub Actions across a full platform × TLS × compression matrix:
-
-| Platform | TLS ON, Compression ON | TLS ON, Compression OFF | TLS OFF |
-|---|---|---|---|
-| Ubuntu (GCC) | ✓ | ✓ | ✓ |
-| macOS (Clang) | ✓ | ✓ | ✓ |
-| Windows (MSVC) | ✓ | ✓ | ✓ |
-
-A separate benchmark workflow runs [TechEmpower](https://www.techempower.com/benchmarks/)-style
-endpoints (Plaintext cat. 6 + JSON cat. 1) with `wrk` on each push to main.
-
 ## Quick Start — Server
 
 ```cpp
@@ -404,10 +391,6 @@ router.any   ("/path",         handler)   // all methods
 router.use   (middleware)                  // global
 router.use   ("/prefix", middleware)       // prefix-scoped
 ```
-
-> **Note:** The C++ enum value is `pico::Method::DEL` (not `DELETE`) to avoid
-> a collision with the `DELETE` macro defined in `<winnt.h>` on Windows.
-> The HTTP verb string `"DELETE"` is used in wire format and string conversions.
 
 ### `pico::Request` (inside handlers)
 
